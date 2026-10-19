@@ -1,0 +1,17 @@
+{
+  "name": "Ma P'tite Supérette",
+  "short_name": "Supérette",
+  "description": "Gère ta petite supérette : rayons, clients, caisse.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1f5c5a",
+  "theme_color": "#1f5c5a",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

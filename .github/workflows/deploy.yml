@@ -1,0 +1,65 @@
+name: Déployer sur GitHub Pages
+
+# À chaque push sur main : construit le jeu (node build.mjs -> dist/index.html autonome
+# + fichiers de public/), lance les tests, puis publie dist/ sur
+#   https://scuillerjack-oss.github.io/Sup-rette-/
+# Le jeu n'a aucune dépendance npm : pas de npm install ici.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Construire le jeu
+        run: node build.mjs
+
+      - name: Tests
+        run: node --test "tests/*.mjs"
+
+      - name: Vérifier le contenu de dist/
+        run: |
+          for f in index.html sw.js offline.html manifest.webmanifest \
+                   icons/icon-192.png icons/icon-512.png icons/icon-512-maskable.png; do
+            test -f "dist/$f" || { echo "Manquant dans dist/ : $f"; exit 1; }
+          done
+          if grep -E '(src|href)="/' dist/index.html; then echo "Chemin absolu trouvé (doit être relatif)"; exit 1; fi
+
+      # Active Pages (source « GitHub Actions ») si ce n'est pas déjà fait. Le jeton GITHUB_TOKEN
+      # n'a souvent pas le droit de le faire : on n'échoue pas ici, deploy-pages dira clairement
+      # si Pages n'est pas activé.
+      - uses: actions/configure-pages@v5
+        continue-on-error: true
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

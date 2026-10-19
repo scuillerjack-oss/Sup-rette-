@@ -1,0 +1,100 @@
+name: APK Android de bêta
+
+# À chaque push sur main : fabrique un APK Android signé avec la clé de bêta STABLE
+# (android-debug/, clé de débogage PUBLIQUE) et le publie à une adresse FIXE :
+#   https://github.com/scuillerjack-oss/Sup-rette-/releases/download/beta/superette-beta.apk
+# L'APK charge le jeu depuis GitHub Pages (scripts/apk-beta-config.js -> server.url) :
+# chaque fusion met à jour l'appli déjà installée au lancement suivant, sans retélécharger.
+# Le projet android/ n'est pas committé : il est régénéré ici (npx cap add android).
+# Sur une branche mission/** : compile pour vérifier, sans rien publier. Rien de payant.
+on:
+  push:
+    branches: [main, 'mission/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22 # Capacitor CLI 8 exige Node >= 22
+
+      # Pas de package-lock.json : npm install (et non npm ci). Seulement Capacitor.
+      - run: npm install --no-audit --no-fund
+      - run: node build.mjs
+      - run: node --test "tests/*.mjs"
+      - run: test -f dist/offline.html
+
+      - name: Générer le projet Android (jeu chargé depuis GitHub Pages)
+        run: |
+          node scripts/apk-beta-config.js
+          npx cap add android
+          node scripts/android-prepare.mjs
+          npx cap sync android
+          chmod +x android/gradlew
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Version automatique depuis package.json
+        run: |
+          read CODE NAME < <(node scripts/android-version.js "${{ github.run_number }}")
+          echo "SUPERETTE_VERSION_CODE=$CODE" >> "$GITHUB_ENV"
+          echo "SUPERETTE_VERSION_NAME=$NAME-beta" >> "$GITHUB_ENV"
+          echo "Version Android : $NAME-beta (code $CODE)"
+
+      - name: Compiler l'APK (clé de bêta stable)
+        working-directory: android
+        env:
+          SUPERETTE_BETA_SIGNING: '1'
+        run: ./gradlew assembleRelease --stacktrace --no-daemon
+
+      - name: Vérifier la signature et renommer
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          test -f "$APK"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify --print-certs "$APK" | tee signature.txt
+          # Empreinte attendue de android-debug/superette-debug.keystore (alias androiddebugkey).
+          grep -qi "a9fce234fef78a8b40f8eeaf694d0272ad1a4d7c2593a17e355a1cf4da623e16" signature.txt
+          cp "$APK" superette-beta.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: superette-beta-apk
+          path: superette-beta.apk
+          if-no-files-found: error
+
+      - name: Publier dans la pré-version « beta » (adresse fixe)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NOTES="Bêta Android ${SUPERETTE_VERSION_NAME} (commit ${GITHUB_SHA}).
+          Télécharger sur le téléphone : https://github.com/${GITHUB_REPOSITORY}/releases/download/beta/superette-beta.apk
+          S'installe par-dessus la bêta précédente (même signature) : la partie est conservée.
+          Le jeu se met ensuite à jour tout seul depuis https://scuillerjack-oss.github.io/Sup-rette-/"
+          if gh release view beta >/dev/null 2>&1; then
+            gh release upload beta superette-beta.apk --clobber
+            gh release edit beta --prerelease --title "Bêta Android ${SUPERETTE_VERSION_NAME}" --notes "$NOTES"
+          else
+            gh release create beta superette-beta.apk --prerelease --target "$GITHUB_SHA" \
+              --title "Bêta Android ${SUPERETTE_VERSION_NAME}" --notes "$NOTES"
+          fi
+          {
+            echo "### APK de bêta publié : ${SUPERETTE_VERSION_NAME}"
+            echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/beta/superette-beta.apk"
+          } >> "$GITHUB_STEP_SUMMARY"

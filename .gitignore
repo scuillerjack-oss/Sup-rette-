@@ -1,0 +1,21 @@
+node_modules
+dist
+.DS_Store
+package-lock.json
+
+# Projet Android : régénéré à chaque build par la CI (npx cap add android), jamais committé.
+android/
+ios/
+
+# Secrets : jamais dans le dépôt.
+.env
+.env.*
+*.keystore
+*.jks
+# Seule exception : la clé de DÉBOGAGE publique des APK de bêta (voir android-debug/README.md).
+!android-debug/superette-debug.keystore
+key.properties
+keystore.properties
+google-services.json
+*.p8
+*.p12

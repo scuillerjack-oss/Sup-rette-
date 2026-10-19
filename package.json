@@ -1,0 +1,18 @@
+{
+  "name": "superette",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Ma P'tite Supérette — jeu mobile (PWA + APK Android de bêta)",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test \"tests/*.mjs\""
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/core": "^8.5.2"
+  }
+}

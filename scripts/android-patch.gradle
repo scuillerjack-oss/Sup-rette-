@@ -1,0 +1,34 @@
+// Ajouté à la fin de android/app/build.gradle par la CI (android-apk.yml), juste après
+// `npx cap add android` : le dossier android/ n'est PAS committé, il est régénéré à chaque build.
+//
+// 1. versionCode / versionName depuis package.json (scripts/android-version.js), fournis par
+//    les variables SUPERETTE_VERSION_CODE / SUPERETTE_VERSION_NAME.
+// 2. Si SUPERETTE_BETA_SIGNING=1 : signature avec la clé de DÉBOGAGE publique
+//    (android-debug/superette-debug.keystore, voir android-debug/README.md). Toujours la même
+//    signature => chaque bêta s'installe par-dessus la précédente sans perdre les parties.
+def superetteVersionCode = System.getenv("SUPERETTE_VERSION_CODE")
+def superetteVersionName = System.getenv("SUPERETTE_VERSION_NAME")
+def superetteBetaSigning = System.getenv("SUPERETTE_BETA_SIGNING") == "1"
+
+android {
+    defaultConfig {
+        if (superetteVersionCode) versionCode superetteVersionCode.toInteger()
+        if (superetteVersionName) versionName superetteVersionName
+    }
+    if (superetteBetaSigning) {
+        signingConfigs {
+            superetteBeta {
+                storeFile rootProject.file('../android-debug/superette-debug.keystore')
+                storeType 'pkcs12'
+                storePassword 'android'
+                keyAlias 'androiddebugkey'
+                keyPassword 'android'
+            }
+        }
+        buildTypes {
+            release {
+                signingConfig signingConfigs.superetteBeta
+            }
+        }
+    }
+}
