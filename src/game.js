@@ -62,7 +62,10 @@ export function deserialize(json) {
     }
     const base = newState();
     const merged = { ...base, ...s, staff: { ...base.staff, ...s.staff }, stats: { ...base.stats, ...s.stats } };
-    for (const p of PRODUCTS) if (merged.prices[p.id] == null) merged.prices[p.id] = cents(p.market);
+    for (const p of PRODUCTS) {
+      if (merged.prices[p.id] == null) merged.prices[p.id] = cents(p.market);
+      merged.prices[p.id] = Math.max(minPriceOf(p), merged.prices[p.id]);
+    }
     return merged;
   } catch (e) {
     return null;
@@ -70,6 +73,10 @@ export function deserialize(json) {
 }
 
 // ---------------------------------------------------------------- utilitaires
+// Prix minimum : le prix d'achat unitaire (arrondi aux 10 centimes supérieurs).
+export function minPriceOf(p) {
+  return Math.ceil(cents(p.cartonCost) / p.qty / 10) * 10;
+}
 export function slotById(id) {
   return SHELF_SLOTS.find((s) => s.id === id);
 }
@@ -429,6 +436,7 @@ export class Game {
     if (s.level < def.level) return { ok: false, reason: `Niveau ${def.level} requis` };
     const cands = this.ensureCandidates()[kind];
     const cand = cands.find((c) => c.id === candidateId) || cands[0];
+    if (!cand) return { ok: false, reason: 'Plus de candidat cette semaine' };
     const cost = this.staffCost(kind, cand.level);
     if (kind === 'cashier' && s.staff.cashiers.filter((c) => c.days > 0).length >= s.registers.length) {
       return { ok: false, reason: 'Une personne par caisse au maximum' };
@@ -460,8 +468,7 @@ export class Game {
 
   // Prix minimum : le prix d'achat unitaire (arrondi aux 10 centimes supérieurs).
   minPrice(id) {
-    const p = PRODUCT_BY_ID[id];
-    return Math.ceil(cents(p.cartonCost) / p.qty / 10) * 10;
+    return minPriceOf(PRODUCT_BY_ID[id]);
   }
 
   setPrice(id, value) {
@@ -497,9 +504,16 @@ export class Game {
       if (s.delivery[i].length < SPOT_STACK && (best < 0 || s.delivery[i].length < s.delivery[best].length)) best = i;
     }
     if (best >= 0) s.delivery[best].push(carry);
+    else s.pending.push({ product: carry.product, eta: 1, qty: carry.qty });
   }
 
   repathAll() {
+    for (const a of [this.player, this.stocker]) {
+      if (a && a.path.length) {
+        const last = a.path[a.path.length - 1];
+        this.moveTo(a, last.r, last.c, a.onArrive);
+      }
+    }
     for (const cu of this.customers) {
       if (cu.target) this.moveTo(cu, cu.target.r, cu.target.c, cu.onArrive);
     }
@@ -1017,7 +1031,7 @@ export class Game {
           idx = best;
         }
         if (idx < 0) break;
-        s.delivery[idx].push({ product: d.product, qty: PRODUCT_BY_ID[d.product].qty });
+        s.delivery[idx].push({ product: d.product, qty: d.qty ?? PRODUCT_BY_ID[d.product].qty });
         s.pending.splice(s.pending.indexOf(d), 1);
         this.emit('delivery', {});
       }

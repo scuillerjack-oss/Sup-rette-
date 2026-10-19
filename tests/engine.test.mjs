@@ -70,3 +70,23 @@ test('robot : 20 journées sans blocage ni pièces négatives durables', () => {
   assert.ok(r.game.state.level >= 5, `niveau ${r.game.state.level}`);
   assert.ok(r.dayStats.slice(-5).every((d) => d.coins > 0));
 });
+
+test('migration : sauvegarde V0.1 → V1 (employés, prix sous le plancher)', () => {
+  const old = JSON.parse(serialize(newState()));
+  old.version = 1;
+  old.staff = { cashier: 3, stocker: 2 };
+  old.prices.eau = 10;
+  const s = deserialize(JSON.stringify(old));
+  assert.equal(s.version, 2);
+  assert.equal(s.staff.cashiers[0].days, 3);
+  assert.equal(s.staff.stocker.days, 2);
+  assert.ok(s.prices.eau >= 50);
+  const g = new Game(s);
+  assert.ok(g.stocker);
+});
+
+test('carte : client facturé trop = recette encaissée, prix minimum respecté', () => {
+  const g = new Game();
+  g.setPrice('eau', 0);
+  assert.equal(g.state.prices.eau, g.minPrice('eau'));
+});
