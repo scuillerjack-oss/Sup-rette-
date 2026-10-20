@@ -163,6 +163,10 @@ export class Renderer {
     return { r, c };
   }
 
+  tileScreen(r, c) {
+    return { x: this.ox + (c + 0.5) * this.T, y: this.oy + (r + 0.5) * this.T - this.shift };
+  }
+
   addRipple(px, py) {
     this.ripples.push({ x: px, y: py, t: 0 });
   }

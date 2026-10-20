@@ -4,6 +4,7 @@ import { Game, newState, serialize, deserialize } from './game.js';
 import { Renderer } from './render.js';
 import { Renderer3D, webglAvailable } from './render3d.js';
 import { UI } from './ui.js';
+import { resolveTap, isTap } from './tap.js';
 import { settings, unlockAudio } from './audio.js';
 
 function loadState() {
@@ -61,24 +62,35 @@ function start(hotData) {
   if (game.state.phase === 'summary' && game.state.lastSummary) ui.showSummary(game.state.lastSummary);
 
   // Toucher sur la carte
+  // Un seul doigt suivi à la fois ; un geste annulé par le téléphone (pointercancel) compte s'il était un vrai tap.
   let down = null;
   canvas.addEventListener('pointerdown', (e) => {
     unlockAudio();
-    down = { x: e.clientX, y: e.clientY, t: performance.now() };
+    if (down && e.pointerId !== down.id) return;
+    down = { id: e.pointerId, x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now() };
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* rien */ }
   });
-  canvas.addEventListener('pointerup', (e) => {
-    if (!down) return;
-    const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+  canvas.addEventListener('pointermove', (e) => {
+    if (down && e.pointerId === down.id) { down.lx = e.clientX; down.ly = e.clientY; }
+  });
+  const endTap = (e, cancelled) => {
+    if (!down || e.pointerId !== down.id) return;
+    const d = down;
     down = null;
-    if (moved > 18) return;
+    const x = cancelled ? d.lx : e.clientX;
+    const y = cancelled ? d.ly : e.clientY;
+    if (!isTap(d, x, y, performance.now())) return;
     const rect = canvas.getBoundingClientRect();
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
-    const tile = renderer.pick(px, py);
+    const px = x - rect.left;
+    const py = y - rect.top;
     renderer.addRipple(px, py);
+    const tile = resolveTap(game, renderer, px, py);
     if (!tile) return;
     ui.handleTapResult(game.tap(tile.r, tile.c));
-  });
+  };
+  canvas.addEventListener('pointerup', (e) => endTap(e, false));
+  canvas.addEventListener('pointercancel', (e) => endTap(e, true));
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   document.addEventListener('pointerdown', unlockAudio, { once: true });
 
   window.addEventListener('resize', () => renderer.resize());

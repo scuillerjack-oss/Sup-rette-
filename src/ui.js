@@ -1,4 +1,5 @@
 // Interface DOM : HUD, barre du bas, panneaux, mini-jeu de caisse, fin de journée.
+import { shouldCloseOnBackdrop } from './tap.js';
 import { PRODUCTS, PRODUCT_BY_ID, STAFF, ZONES, REGISTERS, SHELF_CAPACITY, CHANGE_MONEY, DAY_START, DAY_END, xpForLevel, dailyCharges, CASHIER_LEVELS, STOCKER_LEVELS } from './data.js';
 import { cents } from './game.js';
 import { drawProduct, money } from './render.js';
@@ -26,13 +27,27 @@ function iconUrl(id, size = 56) {
 
 const coinSvg = '<span class="coin" aria-hidden="true"></span>';
 
+// Popularité (0 à 100)
+function popIcon(v) { return v >= 75 ? '🤩' : v >= 50 ? '😊' : v >= 25 ? '🙂' : '😟'; }
+function popLabel(v) { return v >= 75 ? 'le quartier adore' : v >= 50 ? 'bonne réputation' : v >= 25 ? 'on commence à te connaître' : 'les clients t’évitent'; }
+function popColor(v) { return v >= 50 ? '#3ccf8e' : v >= 25 ? '#ffd36b' : '#ff7a5c'; }
+const POP_CAUSES = { prix: '🏷️ Prix', service: '😊 Service', arnaque: '😠 Arnaques repérées', choix: '📦 Choix en rayon', personnel: '👥 Personnel' };
+function popRows(rep) {
+  if (!rep) return '';
+  const rows = Object.keys(POP_CAUSES).filter((k) => Math.abs(rep[k] || 0) >= 0.05).map((k) => {
+    const v = rep[k];
+    return `<div class="poprow"><span>${POP_CAUSES[k]}</span><b class="${v >= 0 ? 'pos' : 'neg'}">${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1).replace('.', ',')}</b></div>`;
+  });
+  return rows.length ? `<div class="poprows">${rows.join('')}</div>` : '';
+}
+
 function hhmm(min) {
   const m = Math.floor(min);
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 }
 
 const TUTO = [
-  'Touche l’ordinateur 🖥️ en haut à droite pour commander tes premiers cartons.',
+  'Touche le bouton « Commander » 🖥️ en bas (ou l’ordinateur en haut à droite) pour commander tes premiers cartons.',
   'Les cartons arrivent dans la réserve. Touche un carton pour le prendre.',
   'Touche une étagère pour y ranger le carton.',
   'Ouvre le magasin, puis touche la caisse pour servir les clients.',
@@ -59,6 +74,7 @@ export class UI {
     $('#btnStaff').onclick = () => this.open('staff');
     $('#btnBuild').onclick = () => this.open('build');
     $('#btnMenu').onclick = () => this.open('menu');
+    $('#btnPop').onclick = () => this.open('pop');
     $('#btnSpeed').onclick = () => {
       this.g.speed = this.g.speed === 1 ? 2 : this.g.speed === 2 ? 3 : 1;
       $('#btnSpeed').textContent = `×${this.g.speed}`;
@@ -68,8 +84,12 @@ export class UI {
       this.g.openStore();
       this.renderPhase();
     };
+    let downOnBackdrop = false;
+    $('#sheet').addEventListener('pointerdown', (e) => { downOnBackdrop = e.target.id === 'sheet'; });
     $('#sheet').addEventListener('click', (e) => {
-      if (e.target.id === 'sheet') this.close();
+      const ok = e.target.id === 'sheet' && shouldCloseOnBackdrop(downOnBackdrop, this.openedAt || 0, performance.now());
+      downOnBackdrop = false;
+      if (ok) this.close();
     });
     $('#sheetBody').addEventListener('click', (e) => this.onSheetClick(e));
     $('#checkout').addEventListener('click', (e) => this.onCheckoutClick(e));
@@ -145,7 +165,15 @@ export class UI {
       this.last.dk = dk;
       $('#daybar').style.width = dk;
     }
-    set('#rep', (1 + (s.reputation / 100) * 4).toFixed(1).replace('.', ','));
+    const pop = Math.round(s.reputation);
+    set('#rep', String(pop));
+    set('#repIco', popIcon(pop));
+    const pw = `${pop}%`;
+    if (this.last.pw !== pw) {
+      this.last.pw = pw;
+      $('#popbar').style.width = pw;
+      $('#popbar').style.background = popColor(pop);
+    }
     // Bulle « à la caisse »
     const p = this.g.player;
     const atReg = p.atRegister != null && !p.path.length && !this.g.checkout;
@@ -182,6 +210,7 @@ export class UI {
   open(kind, data = {}) {
     if (kind === 'order') this.cart = {};
     this.sheet = { kind, data };
+    this.openedAt = performance.now();
     $('#sheet').hidden = false;
     requestAnimationFrame(() => $('#sheet').classList.add('show'));
     this.refreshSheet();
@@ -207,7 +236,8 @@ export class UI {
       shelf: () => this.shelfHtml(data.slot),
       buyShelf: () => this.buyShelfHtml(data.slot),
       zone: () => this.buildHtml(),
-      menu: () => this.menuHtml()
+      menu: () => this.menuHtml(),
+      pop: () => this.popHtml()
     }[kind];
     const body = $('#sheetBody');
     const scroll = body.scrollTop;
@@ -333,7 +363,9 @@ export class UI {
     const s = g.state;
     const freeSlots = s.zones.length * 7 - s.shelves.filter((x) => s.zones.includes(x.slot[0])).length;
     const items = [];
-    items.push(`<div class="card"><div class="ico">🗄️</div><div class="info"><b>Nouvelle étagère</b><span>${freeSlots ? `Touche un emplacement « + » sur le plan pour la placer. ${freeSlots} emplacement${freeSlots > 1 ? 's' : ''} libre${freeSlots > 1 ? 's' : ''}.` : 'Aucun emplacement libre : agrandis le magasin.'}</span></div><span class="tag">${coinSvg}${money(g.nextShelfCost())}</span></div>`);
+    const freeId = g.firstFreeSlot();
+    items.push(`<div class="card"><div class="ico">🗄️</div><div class="info"><b>Nouvelle étagère</b><span>${freeSlots ? `Touche « Placer », ou un « + » sur le plan pour choisir l’endroit. ${freeSlots} emplacement${freeSlots > 1 ? 's' : ''} libre${freeSlots > 1 ? 's' : ''}.` : 'Aucun emplacement libre : agrandis le magasin.'}</span></div>
+      ${freeId ? `<button class="buy place" data-a="shelf" data-id="${freeId}" ${s.coins < g.nextShelfCost() ? 'disabled' : ''}>Placer · ${coinSvg}${money(g.nextShelfCost())}</button>` : `<span class="tag">${coinSvg}${money(g.nextShelfCost())}</span>`}</div>`);
     for (const z of ZONES) {
       if (!z.cost) continue;
       const owned = s.zones.includes(z.id);
@@ -349,6 +381,24 @@ export class UI {
         ${owned ? '<span class="pill good">Installée</span>' : `<button class="buy" data-a="register" data-id="${r.id}" ${locked || s.coins < cents(r.cost) ? 'disabled' : ''}>${coinSvg}${money(cents(r.cost))}</button>`}</div>`);
     }
     return `${this.head('Aménager', `Charges du jour : ${money(cents(dailyCharges(s)))} (loyer et électricité)`)}<div class="list">${items.join('')}</div>`;
+  }
+
+  popHtml() {
+    const s = this.g.state;
+    const pop = Math.round(s.reputation);
+    return `${this.head('Popularité du magasin', `${popIcon(pop)} ${pop} / 100 · ${popLabel(pop)}`)}
+      <div class="popgauge"><span style="width:${pop}%;background:${popColor(pop)}"></span></div>
+      <p class="empty">Plus ta supérette est populaire, plus il y a de clients (jusqu’à ×1,45 au sommet, ×0,55 au plus bas). Elle bouge tous les jours.</p>
+      <h3 class="sec">Ce qui la fait monter ou baisser</h3>
+      <div class="poprows">
+        <div class="poprow"><span>🏷️ Prix bas (sous le prix conseillé)</span><b class="pos">↑</b></div>
+        <div class="poprow"><span>📦 Choix de produits et rayons bien remplis</span><b class="pos">↑</b></div>
+        <div class="poprow"><span>👥 Personnel de qualité (étoiles)</span><b class="pos">↑</b></div>
+        <div class="poprow"><span>😊 Clients bien servis, sans attente</span><b class="pos">↑</b></div>
+        <div class="poprow"><span>😠 Client arnaqué qui s’en rend compte</span><b class="neg">↓↓</b></div>
+        <div class="poprow"><span>❓ Produits introuvables, file trop longue</span><b class="neg">↓</b></div>
+      </div>
+      <h3 class="sec">Aujourd’hui</h3>${popRows(s.stats.rep) || '<p class="empty">Rien de notable pour l’instant.</p>'}`;
   }
 
   shelfHtml(slotId) {
@@ -541,7 +591,8 @@ export class UI {
           ${line('Loyer et charges', `−${money(d.charges)}`)}
           ${line('Résultat', `${d.profit >= 0 ? '+' : ''}${money(d.profit)}`, d.profit >= 0 ? 'big pos' : 'big neg')}
         </div>
-        <div class="chips"><span>🧺 ${d.served} clients</span><span>📦 ${d.sold} articles</span>${d.missing ? `<span class="warn">❓ ${d.missing} introuvables</span>` : ''}${d.angry ? `<span class="warn">😠 ${d.angry} partis fâchés</span>` : ''}${d.staffErrors ? `<span class="warn">🧾 ${d.staffErrors} erreur${d.staffErrors > 1 ? 's' : ''} de caisse</span>` : ''}<span>★ réputation ${(1 + (d.reputation / 100) * 4).toFixed(1).replace('.', ',')}</span></div>
+        <div class="chips"><span>🧺 ${d.served} clients</span><span>📦 ${d.sold} articles</span>${d.missing ? `<span class="warn">❓ ${d.missing} introuvables</span>` : ''}${d.angry ? `<span class="warn">😠 ${d.angry} partis fâchés</span>` : ''}${d.staffErrors ? `<span class="warn">🧾 ${d.staffErrors} erreur${d.staffErrors > 1 ? 's' : ''} de caisse</span>` : ''}<span>${popIcon(d.reputation)} popularité ${Math.round(d.reputation)} %</span></div>
+        ${popRows(d.rep)}
         ${d.staffEnding.length ? `<p class="note">Fin de contrat : ${d.staffEnding.map(esc).join(', ')}. Pense à renouveler dans Personnel.</p>` : ''}
         <button class="primary" data-a="next">Préparer le jour ${d.day + 1}</button>`;
     }

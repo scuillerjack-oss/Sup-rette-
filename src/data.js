@@ -140,8 +140,12 @@ export function buyChance(ratio) {
 }
 
 // Clients attendus sur la journée.
+// La popularité (0 à 100) agit fort : ×0,55 quand elle est au plus bas, ×1,45 au plus haut.
+export function popularityFactor(reputation) {
+  return 0.55 + (Math.max(0, Math.min(100, reputation)) / 100) * 0.9;
+}
 export function customersPerDay(state, stockedTypes) {
-  return Math.round(7 + 1.7 * stockedTypes + state.reputation * 0.2 + Math.min(10, state.level * 0.6));
+  return Math.max(4, Math.round((13 + 1.9 * stockedTypes + Math.min(10, state.level * 0.6)) * popularityFactor(state.reputation)));
 }
 
 export const DELIVERY_SECONDS = 10; // délai de livraison (temps réel, ×vitesse)

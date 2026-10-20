@@ -57,7 +57,16 @@ button:disabled { opacity: 0.45; cursor: default; }
 .lvl small { font-size: 0.62rem; letter-spacing: 0.06em; opacity: 0.85; }
 .xptrack { height: 4px; background: rgba(255,255,255,0.2); border-radius: 2px; overflow: hidden; margin-top: 2px; }
 #xpbar { display: block; height: 100%; width: 0; background: #7ff0c9; transition: width 0.3s; }
-.rep { font-family: var(--display); font-weight: 800; color: #ffd36b; font-size: 1rem; }
+.rep { font-family: var(--display); font-weight: 800; color: #fff; font-size: 0.9rem; background: rgba(255,255,255,0.1); border: 0; border-radius: 12px; padding: 4px 6px; min-width: 50px; flex: none; line-height: 1; cursor: pointer; }
+.rep-top { display: flex; align-items: center; justify-content: center; gap: 3px; }
+.poptrack { display: block; height: 5px; background: rgba(255,255,255,0.2); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+#popbar { display: block; height: 100%; width: 30%; border-radius: 3px; background: #ffd36b; transition: width 0.4s, background 0.4s; }
+.popgauge { height: 16px; background: #e3ece8; border-radius: 8px; overflow: hidden; margin: 8px 0 4px; }
+.popgauge span { display: block; height: 100%; border-radius: 8px; }
+.poprows { display: grid; gap: 6px; margin: 10px 0; }
+.poprow { display: flex; justify-content: space-between; align-items: center; background: #f2f6f4; border-radius: 10px; padding: 8px 10px; font-size: 0.92rem; }
+.poprow b.pos { color: #1e8f5a; } .poprow b.neg { color: #c8452f; }
+.card .place { margin-left: 8px; }
 .hud-btns { display: flex; gap: 4px; }
 .hud-btns button { width: 38px; height: 38px; border-radius: 12px; background: rgba(255,255,255,0.14); font-family: var(--display); font-weight: 800; font-size: 1rem; color: #fff; }
 
@@ -231,7 +240,7 @@ button:disabled { opacity: 0.45; cursor: default; }
     <div class="money-pill"><span class="coin" aria-hidden="true"></span><span id="coins">0,00</span></div>
     <div class="day"><b id="day">Jour 1</b><span id="clock">Préparation</span><div class="daytrack"><span id="daybar"></span></div></div>
     <div class="lvl" aria-label="Niveau"><small>NIV.</small><b id="lvl">1</b><div class="xptrack"><span id="xpbar"></span></div></div>
-    <div class="rep" aria-label="Réputation">★ <span id="rep">2,2</span></div>
+    <button class="rep" id="btnPop" aria-label="Popularité du magasin"><span class="rep-top"><span id="repIco">🙂</span><span id="rep">30</span></span><span class="poptrack"><span id="popbar"></span></span></button>
     <div class="hud-btns"><button id="btnSpeed" aria-label="Vitesse">×1</button><button id="btnMenu" aria-label="Menu">☰</button></div>
   </header>
   <main id="stage">

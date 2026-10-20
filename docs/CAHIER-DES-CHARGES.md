@@ -32,6 +32,23 @@ V1.0.0 — 19/10/2026 : tout le contenu ci-dessus. Tests : 5 tests Node (dont un
 parcours complet vérifié en Chrome mobile simulé (commande, rangement, caisse dans les 3 modes de paiement, personnel,
 bilan). Rythme mesuré par le robot (V0.1, règles proches) : niveau 10 vers le jour 30, niveau 20 vers le jour 125.
 
+V1.1.0 — 20/10/2026 (retours de bêta de Jack) :
+- **Bug urgent n°1 corrigé** : toucher l'ordinateur ou un « + » d'étagère ouvrait le panneau puis le refermait
+  aussitôt (le « click » qui suit le toucher tombait sur le fond sombre du panneau). Le fond ne ferme plus que si
+  le doigt s'est posé dessus, et jamais juste après l'ouverture.
+- Toucher tolérant : si le doigt tombe à côté, on vise l'objet utile le plus proche (ordinateur, « + », carton, caisse) ;
+  un geste annulé par le téléphone compte s'il était court et immobile.
+- Bouton « Placer » dans Aménager (installe l'étagère sur le premier emplacement libre) ; le tuto indique aussi le
+  bouton « Commander » du bas.
+- **Popularité du magasin** : jauge 0-100 dans le bandeau (touchable pour le détail), elle bouge chaque jour :
+  prix, service, arnaques repérées, choix et remplissage des rayons, étoiles du personnel. Effet fort sur les clients
+  (×0,55 au plus bas, ×1,45 au sommet). Détail par cause dans le bilan de fin de journée.
+- Rythme vérifié au robot : niveau 5 vers le jour 8, niveau 10 vers le jour 31 (avant : 7 et 29).
+
+## Prochaine version (V1.2, demandée par Jack)
+1. Graphismes : monter nettement le niveau (priorité n°2 de Jack après le bug du « + »).
+2. Concurrents dans le quartier, à terme : des magasins rivaux qui prennent des clients si ta popularité baisse.
+
 ## Pistes suivantes
 Gains hors ligne, frigos et produits frais, prix du marché qui bougent, objectifs du jour, décoration, musique
 choisie à l’oreille par Jack, fiche Google Play.

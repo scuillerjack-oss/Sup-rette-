@@ -4,7 +4,7 @@
 import { readFileSync, writeFileSync, mkdirSync, cpSync } from 'node:fs';
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
-const order = ['data', 'layout', 'game', 'render', 'render3d', 'audio', 'ui', 'main'];
+const order = ['data', 'layout', 'game', 'render', 'render3d', 'audio', 'tap', 'ui', 'main'];
 let code = '';
 for (const name of order) {
   let src = readFileSync(new URL(`./src/${name}.js`, import.meta.url), 'utf8');
