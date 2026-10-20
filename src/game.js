@@ -4,7 +4,7 @@ import {
   ZONES, SHELF_SLOTS, SHELF_CAPACITY, REGISTERS, PRODUCTS, PRODUCT_BY_ID, START_COINS, START_SHELVES,
   MAX_LEVEL, xpForLevel, shelfCost, dailyCharges, STAFF, CONTRACT_DAYS, buyChance, customersPerDay,
   CASHIER_LEVELS, STOCKER_LEVELS, FIRST_NAMES, maxCandidateLevel, priceReputation,
-  DELIVERY_SECONDS, PATIENCE_SECONDS, BILLS
+  DELIVERY_SECONDS, PATIENCE_SECONDS, BILLS, EVENTS, EVENT_BY_ID, GOALS_PER_DAY, GOALS_FROM_DAY, goalReward
 } from './data.js';
 import { buildBlocked, findPath } from './layout.js';
 
@@ -35,12 +35,14 @@ export function newState() {
     stats: emptyStats(),
     lastSummary: null,
     totals: { revenue: 0, served: 0, days: 0 },
-    tutorial: 0
+    tutorial: 0,
+    event: null, // événement de quartier du jour (V1.2)
+    goals: null // objectifs du jour (V1.2) : { day, list: [{ kind, target, reward }] }
   };
 }
 
 function emptyStats() {
-  return { revenue: 0, spent: 0, sold: 0, served: 0, angry: 0, missing: 0, profitItems: 0, rep: {} };
+  return { revenue: 0, spent: 0, sold: 0, served: 0, angry: 0, missing: 0, profitItems: 0, perfect: 0, rep: {} };
 }
 
 export function serialize(state) {
@@ -63,6 +65,8 @@ export function deserialize(json) {
     const base = newState();
     const merged = { ...base, ...s, staff: { ...base.staff, ...s.staff }, stats: { ...base.stats, ...s.stats } };
     if (!merged.stats.rep || typeof merged.stats.rep !== 'object') merged.stats.rep = {};
+    if (merged.event && !EVENT_BY_ID[merged.event]) merged.event = null;
+    if (merged.goals && (!Array.isArray(merged.goals.list) || merged.goals.list.some((g) => !GOAL_KINDS[g.kind]))) merged.goals = null;
     for (const p of PRODUCTS) {
       if (merged.prices[p.id] == null) merged.prices[p.id] = cents(p.market);
       merged.prices[p.id] = Math.max(minPriceOf(p), merged.prices[p.id]);
@@ -91,6 +95,18 @@ const SKINS = ['#f6d3b3', '#e8b48f', '#c98d63', '#9c6644', '#6f4a33', '#f1c7a5']
 const HAIRS = ['#2b1d14', '#5a3a22', '#a8642e', '#e6c068', '#1f1f1f', '#8a8a8a', '#c0462b'];
 const SHIRTS = ['#3a7bd5', '#e85d75', '#2bb673', '#f2a541', '#8e6cdf', '#30a5bf', '#ef6f3c', '#556270'];
 
+// ---------------------------------------------------------------- objectifs du jour (V1.2)
+// value(stats, state) = avancement ; « max » = objectif à ne pas dépasser (jugé en fin de journée).
+const sumRep = (st) => Object.values(st.rep || {}).reduce((a, v) => a + v, 0);
+export const GOAL_KINDS = {
+  serve: { icon: '🧺', label: (t) => `Servir ${t} clients`, value: (st) => st.served },
+  sell: { icon: '📦', label: (t) => `Vendre ${t} articles`, value: (st) => st.sold },
+  perfect: { icon: '🪙', label: (t) => `Rendre la monnaie juste ${t} fois`, value: (st) => st.perfect || 0 },
+  calm: { icon: '😌', label: () => 'Aucun client parti fâché', value: (st) => st.angry, max: true, min: (st) => st.served >= 5 },
+  stock: { icon: '❓', label: (t) => `Au plus ${t} articles introuvables`, value: (st) => st.missing, max: true, min: (st) => st.served >= 5 },
+  pop: { icon: '⭐', label: (t) => `Gagner ${t} points de popularité`, value: (st) => Math.max(0, Math.floor(sumRep(st) * 10) / 10) }
+};
+
 // ---------------------------------------------------------------- le jeu
 export class Game {
   constructor(state) {
@@ -111,7 +127,10 @@ export class Game {
     this.player.carry = null;
     this.player.atRegister = null;
     this.stocker = null;
+    this.moving = null; // mode « Déplacer une étagère » : { from: slotId | null }
     this.syncStaff();
+    // Ancienne sauvegarde (V1.1 et avant) : pas encore d'objectifs du jour.
+    if (!this.state.goals || this.state.goals.day !== this.state.day) this.planDay(this.state.phase === 'prep');
     if (this.state.phase === 'open' || this.state.phase === 'closing') this.spawnClock = 0;
   }
 
@@ -156,6 +175,10 @@ export class Game {
   // Cases qui réagissent au toucher (pour viser juste même si le doigt tombe à côté).
   actionTiles() {
     const s = this.state;
+    if (this.moving) {
+      // Mode « Déplacer » : seules les étagères et les « + » libres réagissent (grosses cibles).
+      return SHELF_SLOTS.filter((sl) => s.shelves.some((x) => x.slot === sl.id) || this.zoneOwned(sl.zone)).map((sl) => ({ r: sl.r, c: sl.c }));
+    }
     const out = [...DELIVERY_SPOTS.map((d) => ({ r: d.r, c: d.c })), ...COMPUTER.tiles.map((t) => ({ r: t.r, c: t.c }))];
     for (const sl of SHELF_SLOTS) {
       if (this.zoneOwned(sl.zone) || s.shelves.some((x) => x.slot === sl.id)) out.push({ r: sl.r, c: sl.c });
@@ -226,6 +249,7 @@ export class Game {
   tap(r, c) {
     const s = this.state;
     if (s.phase === 'summary') return null;
+    if (this.moving) return this.tapMove(r, c);
     const p = this.player;
     // Emplacement de livraison
     const spotIdx = DELIVERY_SPOTS.findIndex((d) => d.r === r && d.c === c);
@@ -530,6 +554,155 @@ export class Game {
     else s.pending.push({ product: carry.product, eta: 1, qty: carry.qty });
   }
 
+  // ------------------------------------------------------------- déplacer une étagère (V1.2)
+  // Gratuit. Le produit et la quantité suivent l'étagère. Refusé si quelqu'un la remplit ou s'y sert,
+  // ou si quelqu'un se tient sur l'emplacement visé. Tous les chemins sont recalculés ensuite.
+  canMoveShelf(fromId, toId) {
+    const s = this.state;
+    const shelf = s.shelves.find((x) => x.slot === fromId);
+    if (!shelf) return { ok: false, reason: 'Pas d’étagère à cet endroit' };
+    const to = slotById(toId);
+    if (!to) return { ok: false, reason: 'Emplacement inconnu' };
+    if (fromId === toId) return { ok: false, reason: 'L’étagère est déjà ici' };
+    if (!this.zoneOwned(to.zone)) return { ok: false, reason: 'Cette allée n’est pas encore ouverte' };
+    if (s.shelves.some((x) => x.slot === toId)) return { ok: false, reason: 'Cet emplacement est déjà pris' };
+    const from = slotById(fromId);
+    const fillers = [this.player, this.stocker].filter((a) => a && a.fill && a.fill.shelf === shelf);
+    if (fillers.length) {
+      return { ok: false, reason: fillers[0].kind === 'player' ? 'Tu es en train de remplir ce rayon : attends la fin' : `${this.stocker.name || 'Le magasinier'} remplit ce rayon : réessaie dans un instant` };
+    }
+    if (this.customers.some((cu) => cu.state === 'browse' && !cu.path.length && this.tileOf(cu).r === from.r + 1 && this.tileOf(cu).c === from.c)) {
+      return { ok: false, reason: 'Un client se sert dans ce rayon : réessaie dans un instant' };
+    }
+    const agents = [this.player, this.stocker, ...this.customers].filter(Boolean);
+    if (agents.some((a) => { const t = this.tileOf(a); return t.r === to.r && t.c === to.c; })) {
+      return { ok: false, reason: 'Quelqu’un passe à cet endroit : réessaie dans un instant' };
+    }
+    return { ok: true, shelf, from, to };
+  }
+
+  moveShelf(fromId, toId) {
+    const chk = this.canMoveShelf(fromId, toId);
+    if (!chk.ok) return chk;
+    const { shelf, from, to } = chk;
+    const oldFront = { r: from.r + 1, c: from.c };
+    const endsAt = (a, t) => a && a.path.length && a.path[a.path.length - 1].r === t.r && a.path[a.path.length - 1].c === t.c;
+    shelf.slot = toId;
+    this.rebuild();
+    // Ceux qui allaient vers l'ancien emplacement vont au nouveau.
+    for (const cu of this.customers) {
+      if (cu.state === 'shop' && cu.target && cu.target.r === oldFront.r && cu.target.c === oldFront.c) cu.target = { r: to.r + 1, c: to.c };
+    }
+    const p = this.player;
+    if (endsAt(p, oldFront) && p.carry) {
+      this.moveTo(p, to.r + 1, to.c, () => this.startFill(p, shelf, to));
+    }
+    const st = this.stocker;
+    if (st && endsAt(st, oldFront)) {
+      st.path = [];
+      st.onArrive = null;
+      st.busy = false;
+      st.idle = 0;
+    }
+    this.repathAll();
+    this.emit('sfx', { name: 'build' });
+    return { ok: true };
+  }
+
+  // Cases libres où l'étagère peut aller (allées ouvertes).
+  freeSlots() {
+    const s = this.state;
+    return SHELF_SLOTS.filter((sl) => this.zoneOwned(sl.zone) && !s.shelves.some((x) => x.slot === sl.id));
+  }
+
+  startMove(fromId = null) {
+    this.moving = { from: fromId };
+    this.emit('moving', { on: true });
+  }
+
+  cancelMove() {
+    if (!this.moving) return;
+    this.moving = null;
+    this.emit('moving', { on: false });
+  }
+
+  // Toucher pendant le mode « Déplacer » : choisir l'étagère, puis un « + » libre.
+  tapMove(r, c) {
+    const mv = this.moving;
+    const sh = this.shelfAt(r, c);
+    if (sh && sh.shelf) {
+      if (mv.from === sh.slot.id) {
+        this.cancelMove();
+        return { moveCancelled: true };
+      }
+      mv.from = sh.slot.id;
+      this.emit('moving', { on: true });
+      this.emit('sfx', { name: 'tick' });
+      return { moveFrom: sh.slot.id };
+    }
+    if (sh && !sh.shelf && mv.from) {
+      const res = this.moveShelf(mv.from, sh.slot.id);
+      if (!res.ok) {
+        this.emit('sfx', { name: 'error' });
+        return this.toast(res.reason);
+      }
+      this.moving = null;
+      this.emit('moving', { on: false });
+      return { moved: false, moveDone: sh.slot.id };
+    }
+    return this.toast(mv.from ? 'Touche un « + » libre pour y poser l’étagère' : 'Touche l’étagère à déplacer');
+  }
+
+  // ------------------------------------------------------------- journée : événement et objectifs (V1.2)
+  // Multiplicateur de clients du jour. Point d'entrée prévu pour les concurrents du quartier (V1.3).
+  dayMultiplier() {
+    const ev = EVENT_BY_ID[this.state.event];
+    return ev ? ev.clients : 1;
+  }
+
+  planDay(withEvent = true) {
+    const s = this.state;
+    s.event = null;
+    if (withEvent && s.day >= 3 && Math.random() < 0.5) {
+      const ok = EVENTS.filter((e) => !e.wanted || e.wanted.some((id) => s.licences.includes(id)));
+      s.event = pick(ok).id;
+    }
+    const expected = customersPerDay(s, Math.max(1, this.stockedTypes()), this.dayMultiplier());
+    const serve = Math.max(5, Math.round(expected * 0.95));
+    const perClient = 1.5 + 0.15 * Math.min(10, s.level);
+    const targets = {
+      serve,
+      sell: Math.max(8, Math.round(serve * perClient * 0.85)),
+      perfect: s.level < 4 ? 2 : 3,
+      calm: 0,
+      stock: 2,
+      pop: s.reputation > 85 ? 0.5 : s.reputation > 60 ? 1 : 2
+    };
+    const kinds = Object.keys(GOAL_KINDS);
+    const list = [];
+    while (s.day >= GOALS_FROM_DAY && list.length < GOALS_PER_DAY) {
+      const k = kinds.splice(Math.floor(Math.random() * kinds.length), 1)[0];
+      list.push({ kind: k, target: targets[k], reward: cents(goalReward(s.level)) });
+    }
+    s.goals = { day: s.day, list };
+  }
+
+  // Avancement des objectifs : { kind, label, value, target, done, failed, reward }
+  goalsStatus(final = false) {
+    const s = this.state;
+    if (!s.goals) return [];
+    return s.goals.list.map((g) => {
+      const def = GOAL_KINDS[g.kind];
+      const value = def.value(s.stats, s);
+      let done, failed = false;
+      if (def.max) {
+        failed = value > g.target;
+        done = final && !failed && def.min(s.stats);
+      } else done = value >= g.target;
+      return { kind: g.kind, icon: def.icon, label: def.label(g.target), value, target: g.target, done, failed, max: !!def.max, reward: g.reward };
+    });
+  }
+
   repathAll() {
     for (const a of [this.player, this.stocker]) {
       if (a && a.path.length) {
@@ -559,6 +732,10 @@ export class Game {
     if (pop.personnel) this.addReputation(pop.personnel, 'personnel');
     const charges = cents(dailyCharges(s));
     s.coins -= charges;
+    // Objectifs du jour : primes en pièces
+    const goals = this.goalsStatus(true);
+    const goalCoins = goals.reduce((a, g) => a + (g.done ? g.reward : 0), 0);
+    s.coins += goalCoins;
     const summary = {
       day: s.day,
       revenue: s.stats.revenue,
@@ -568,7 +745,10 @@ export class Game {
       served: s.stats.served,
       angry: s.stats.angry,
       missing: s.stats.missing,
-      profit: s.stats.revenue - s.stats.spent - charges,
+      profit: s.stats.revenue - s.stats.spent - charges + goalCoins,
+      goals,
+      goalCoins,
+      event: s.event,
       reputation: s.reputation,
       rep: { ...(s.stats.rep || {}) },
       staffEnding: []
@@ -599,6 +779,7 @@ export class Game {
     s.phase = 'prep';
     s.stats = emptyStats();
     this.syncStaff();
+    this.planDay();
     this.checkAid();
     this.emit('phase', { phase: 'prep' });
     this.emit('save');
@@ -665,10 +846,18 @@ export class Game {
     const s = this.state;
     const owned = s.licences;
     const maxItems = Math.min(5, 1 + Math.floor(s.level / 4) + (Math.random() < 0.5 ? 1 : 0));
-    const n = 1 + Math.floor(Math.random() * maxItems);
+    const ev = EVENT_BY_ID[s.event];
+    const n = 1 + Math.floor(Math.random() * maxItems) + (ev?.extra || 0);
     const pool = [...owned];
     const list = [];
-    for (let i = 0; i < n && pool.length; i++) {
+    // Événement : un produit très demandé s'ajoute à beaucoup de listes.
+    const wanted = (ev?.wanted || []).filter((id) => owned.includes(id));
+    if (wanted.length && Math.random() < 0.6) {
+      const id = pick(wanted);
+      pool.splice(pool.indexOf(id), 1);
+      list.push({ product: id, want: Math.random() < 0.5 ? 2 : 1 });
+    }
+    for (let i = list.length; i < n && pool.length; i++) {
       const id = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
       list.push({ product: id, want: Math.random() < 0.3 ? 2 : 1 });
     }
@@ -750,7 +939,8 @@ export class Game {
       return this.nextShelf(cu);
     }
     const ratio = s.prices[item.product] / cents(p.market);
-    if (Math.random() > buyChance(ratio)) {
+    const tol = EVENT_BY_ID[s.event]?.tolerance || 0;
+    if (Math.random() > buyChance(ratio - tol)) {
       cu.mood -= 0.15;
       this.say(cu, '💸');
       cu.idx++;
@@ -898,6 +1088,7 @@ export class Game {
     this.fx.push({ kind: 'coins', x: reg.pay.c, y: reg.pay.r, value: received, t: 0 });
     this.emit('sale', { amount: received });
     cu.basket = [];
+    cu.paid = true; // repart avec son sac (dessin)
     this.leave(cu, true);
   }
 
@@ -988,7 +1179,10 @@ export class Game {
     let noticed = false;
     this.checkout = null;
     if (cu) {
-      if (excess === 0) cu.mood += 0.1;
+      if (excess === 0) {
+        cu.mood += 0.1;
+        this.state.stats.perfect = (this.state.stats.perfect || 0) + 1;
+      }
       if (excess < 0 && Math.random() < 0.8) {
         // Le client remarque qu'on ne lui a pas rendu assez.
         noticed = true;
@@ -1088,7 +1282,7 @@ export class Game {
       s.minute += dt * GAME_MIN_PER_SEC;
       this.spawnClock -= dt * GAME_MIN_PER_SEC;
       if (this.spawnClock <= 0) {
-        const perDay = customersPerDay(s, Math.max(1, this.stockedTypes()));
+        const perDay = customersPerDay(s, Math.max(1, this.stockedTypes()), this.dayMultiplier());
         const interval = (DAY_END - DAY_START) / perDay;
         this.spawnClock = interval * rand(0.55, 1.45);
         if (this.customers.length < 18) this.spawnCustomer();

@@ -3,6 +3,7 @@
 // (ordinateur, « + » d'étagère, carton, caisse…), dans un rayon raisonnable.
 
 export const TAP_RADIUS = 46; // px CSS : à peu près la largeur d'un doigt
+export const TAP_RADIUS_MOVE = 64; // mode « Déplacer une étagère » : cibles plus larges
 
 // candidates : [{ r, c, x, y }] (x, y = centre de la case à l'écran)
 export function nearestTarget(candidates, px, py, radius = TAP_RADIUS) {
@@ -19,12 +20,12 @@ export function nearestTarget(candidates, px, py, radius = TAP_RADIUS) {
 }
 
 // Résout la case visée : la case touchée si elle est utile, sinon la plus proche utile.
-export function resolveTap(game, renderer, px, py) {
+export function resolveTap(game, renderer, px, py, radius = TAP_RADIUS) {
   const tile = renderer.pick(px, py);
   if (tile && game.isActionTile(tile.r, tile.c)) return tile;
   if (!renderer.tileScreen) return tile;
   const cands = game.actionTiles().map((t) => ({ ...t, ...renderer.tileScreen(t.r, t.c) }));
-  return nearestTarget(cands, px, py) || tile;
+  return nearestTarget(cands, px, py, radius) || tile;
 }
 
 // Fond sombre d'un panneau : après un tap sur le plan, le téléphone envoie encore un « click »

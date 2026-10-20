@@ -4,7 +4,7 @@ import { Game, newState, serialize, deserialize } from './game.js';
 import { Renderer } from './render.js';
 import { Renderer3D, webglAvailable } from './render3d.js';
 import { UI } from './ui.js';
-import { resolveTap, isTap } from './tap.js';
+import { resolveTap, isTap, TAP_RADIUS_MOVE } from './tap.js';
 import { settings, unlockAudio } from './audio.js';
 
 function loadState() {
@@ -84,7 +84,7 @@ function start(hotData) {
     const px = x - rect.left;
     const py = y - rect.top;
     renderer.addRipple(px, py);
-    const tile = resolveTap(game, renderer, px, py);
+    const tile = resolveTap(game, renderer, px, py, game.moving ? TAP_RADIUS_MOVE : undefined);
     if (!tile) return;
     ui.handleTapResult(game.tap(tile.r, tile.c));
   };

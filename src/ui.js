@@ -1,6 +1,6 @@
 // Interface DOM : HUD, barre du bas, panneaux, mini-jeu de caisse, fin de journée.
 import { shouldCloseOnBackdrop } from './tap.js';
-import { PRODUCTS, PRODUCT_BY_ID, STAFF, ZONES, REGISTERS, SHELF_CAPACITY, CHANGE_MONEY, DAY_START, DAY_END, xpForLevel, dailyCharges, CASHIER_LEVELS, STOCKER_LEVELS } from './data.js';
+import { PRODUCTS, PRODUCT_BY_ID, STAFF, ZONES, REGISTERS, SHELF_CAPACITY, CHANGE_MONEY, DAY_START, DAY_END, xpForLevel, dailyCharges, CASHIER_LEVELS, STOCKER_LEVELS, EVENT_BY_ID, GOALS_FROM_DAY } from './data.js';
 import { cents } from './game.js';
 import { drawProduct, money } from './render.js';
 import { settings, sfx, haptic } from './audio.js';
@@ -75,6 +75,8 @@ export class UI {
     $('#btnBuild').onclick = () => this.open('build');
     $('#btnMenu').onclick = () => this.open('menu');
     $('#btnPop').onclick = () => this.open('pop');
+    $('#btnGoals').onclick = () => this.open('goals');
+    $('#moveCancel').onclick = () => { this.g.cancelMove(); sfx('tick'); };
     $('#btnSpeed').onclick = () => {
       this.g.speed = this.g.speed === 1 ? 2 : this.g.speed === 2 ? 3 : 1;
       $('#btnSpeed').textContent = `×${this.g.speed}`;
@@ -106,6 +108,10 @@ export class UI {
         this.renderPhase();
         if (data.phase === 'summary') this.showSummary(data.summary);
         if (data.phase === 'closing') this.toast('20:00 · Le magasin ferme, on sert les derniers clients');
+        if (data.phase === 'prep') {
+          const ev = EVENT_BY_ID[this.g.state.event];
+          if (ev) setTimeout(() => this.toast(`${ev.icon} ${ev.name} : ${ev.desc}`), 400);
+        }
         break;
       case 'levelup':
         sfx('level');
@@ -115,6 +121,7 @@ export class UI {
       case 'checkout': this.renderCheckout(); break;
       case 'delivery': sfx('delivery'); break;
       case 'tutorial': this.renderHint(); break;
+      case 'moving': this.renderMove(); break;
       case 'sale': if (this.sheet) this.refreshSheet(); break;
       case 'save': this.hooks.save(); break;
       case 'staffError':
@@ -173,6 +180,16 @@ export class UI {
       this.last.pw = pw;
       $('#popbar').style.width = pw;
       $('#popbar').style.background = popColor(pop);
+    }
+    // Objectifs du jour et événement
+    const gs = this.g.goalsStatus();
+    const ev = EVENT_BY_ID[s.event];
+    const gk = `${gs.filter((x) => x.done).length}/${gs.length}|${ev ? ev.id : ''}|${s.phase}`;
+    if (this.last.goals !== gk) {
+      this.last.goals = gk;
+      const btn = $('#btnGoals');
+      btn.hidden = !gs.length && !ev;
+      btn.innerHTML = `${gs.length ? `<span>🎯 ${gs.filter((x) => x.done).length}/${gs.length}</span>` : ''}${ev ? `<span class="ev">${ev.icon} ${esc(ev.name)}</span>` : ''}`;
     }
     // Bulle « à la caisse »
     const p = this.g.player;
@@ -237,7 +254,8 @@ export class UI {
       buyShelf: () => this.buyShelfHtml(data.slot),
       zone: () => this.buildHtml(),
       menu: () => this.menuHtml(),
-      pop: () => this.popHtml()
+      pop: () => this.popHtml(),
+      goals: () => this.goalsHtml()
     }[kind];
     const body = $('#sheetBody');
     const scroll = body.scrollTop;
@@ -366,6 +384,9 @@ export class UI {
     const freeId = g.firstFreeSlot();
     items.push(`<div class="card"><div class="ico">🗄️</div><div class="info"><b>Nouvelle étagère</b><span>${freeSlots ? `Touche « Placer », ou un « + » sur le plan pour choisir l’endroit. ${freeSlots} emplacement${freeSlots > 1 ? 's' : ''} libre${freeSlots > 1 ? 's' : ''}.` : 'Aucun emplacement libre : agrandis le magasin.'}</span></div>
       ${freeId ? `<button class="buy place" data-a="shelf" data-id="${freeId}" ${s.coins < g.nextShelfCost() ? 'disabled' : ''}>Placer · ${coinSvg}${money(g.nextShelfCost())}</button>` : `<span class="tag">${coinSvg}${money(g.nextShelfCost())}</span>`}</div>`);
+    const nFree = g.freeSlots().length;
+    items.push(`<div class="card"><div class="ico">↔️</div><div class="info"><b>Déplacer une étagère</b><span>${nFree ? 'Gratuit. Touche l’étagère, puis un « + » libre : le produit suit.' : 'Aucun « + » libre pour l’instant.'}</span></div>
+      <button class="buy" data-a="move" ${nFree && s.shelves.length ? '' : 'disabled'}>Déplacer</button></div>`);
     for (const z of ZONES) {
       if (!z.cost) continue;
       const owned = s.zones.includes(z.id);
@@ -401,18 +422,47 @@ export class UI {
       <h3 class="sec">Aujourd’hui</h3>${popRows(s.stats.rep) || '<p class="empty">Rien de notable pour l’instant.</p>'}`;
   }
 
+  goalsHtml() {
+    const s = this.g.state;
+    const ev = EVENT_BY_ID[s.event];
+    const gs = this.g.goalsStatus();
+    const rows = gs.map((x) => {
+      const pct = x.max ? (x.failed ? 0 : 100) : Math.min(100, Math.round((x.value / Math.max(0.1, x.target)) * 100));
+      const state = x.done ? '<span class="pill good">Réussi</span>' : x.failed ? '<span class="pill bad">Raté</span>' : x.max ? '<span class="pill ok">Jugé à 20:00</span>' : `<span class="pill">${String(x.value).replace('.', ',')} / ${String(x.target).replace('.', ',')}</span>`;
+      return `<div class="card goal ${x.done ? 'done' : ''}"><div class="ico">${x.icon}</div><div class="info"><b>${esc(x.label)}</b>${state}<div class="gauge mini"><span style="width:${pct}%"></span></div></div><span class="tag">+${coinSvg}${money(x.reward)}</span></div>`;
+    }).join('');
+    return `${this.head('Aujourd’hui dans le quartier', `Jour ${s.day}`)}
+      ${ev ? `<div class="event"><span>${ev.icon}</span><div><b>${esc(ev.name)}</b><small>${esc(ev.desc)}</small></div></div>` : '<p class="empty">Journée calme : pas d’événement dans le quartier.</p>'}
+      <h3 class="sec">🎯 Objectifs du jour</h3>
+      ${rows ? `<div class="list">${rows}</div><p class="credits">Les primes sont versées au bilan de fin de journée.</p>` : `<p class="empty">Les objectifs du jour arrivent au jour ${GOALS_FROM_DAY}.</p>`}`;
+  }
+
+  renderMove() {
+    const mv = this.g.moving;
+    const bar = $('#moveBar');
+    bar.hidden = !mv;
+    $('#app').classList.toggle('moving', !!mv);
+    if (!mv) return;
+    const sh = mv.from && this.g.state.shelves.find((x) => x.slot === mv.from);
+    const name = sh && sh.product ? `Rayon ${PRODUCT_BY_ID[sh.product].name}` : 'Étagère';
+    $('#moveText').textContent = mv.from ? `${name} : touche un « + » libre pour l’y poser` : 'Touche l’étagère à déplacer';
+  }
+
   shelfHtml(slotId) {
     const s = this.g.state;
     const sh = s.shelves.find((x) => x.slot === slotId);
     if (!sh) return this.head('Étagère');
+    const free = this.g.freeSlots().length;
+    const moveBtn = `<button class="movebtn" data-a="move" data-id="${slotId}" ${free ? '' : 'disabled'}><span>↔️</span><b>Déplacer cette étagère</b><small>${free ? 'Gratuit · le produit suit' : 'Aucun « + » libre : agrandis le magasin'}</small></button>`;
     if (!sh.product) {
-      return `${this.head('Étagère libre')}<p class="empty">Prends un carton dans la réserve puis touche cette étagère pour y ranger le produit.</p>`;
+      return `${this.head('Étagère libre')}<p class="empty">Prends un carton dans la réserve puis touche cette étagère pour y ranger le produit.</p>${moveBtn}`;
     }
     const p = PRODUCT_BY_ID[sh.product];
     return `${this.head(`Rayon ${esc(p.name)}`, `${sh.qty} / ${SHELF_CAPACITY} en rayon`)}
       <div class="gauge"><span style="width:${Math.round((sh.qty / SHELF_CAPACITY) * 100)}%"></span></div>
       <div class="list">${this.priceRow(p)}</div>
-      ${sh.qty === 0 ? '<p class="empty">Rayon vide : range un carton de n’importe quel produit pour le réaffecter.</p>' : ''}`;
+      ${sh.qty === 0 ? '<p class="empty">Rayon vide : range un carton de n’importe quel produit pour le réaffecter.</p>' : ''}
+      ${moveBtn}`;
   }
 
   buyShelfHtml(slotId) {
@@ -462,6 +512,10 @@ export class UI {
       case 'zone': res = g.buyZone(id); if (res.ok) this.toast('Travaux terminés : nouvelle allée !'); break;
       case 'register': res = g.buyRegister(id); if (res.ok) this.toast('Caisse 2 installée'); break;
       case 'shelf': res = g.buyShelf(id); if (res.ok) { this.toast('Étagère installée'); this.close(); return; } break;
+      case 'move':
+        g.startMove(id || null);
+        this.close();
+        return;
       case 'sound': settings.sound = !settings.sound; this.hooks.saveSettings(); break;
       case 'haptics': settings.haptics = !settings.haptics; this.hooks.saveSettings(); if (settings.haptics) haptic(30); break;
       case 'reset':
@@ -589,10 +643,12 @@ export class UI {
           ${line('Ventes', `+${money(d.revenue)}`, 'pos')}
           ${line('Achats de marchandise', `−${money(d.spent)}`)}
           ${line('Loyer et charges', `−${money(d.charges)}`)}
+          ${d.goalCoins ? line('Primes d’objectifs', `+${money(d.goalCoins)}`, 'pos') : ''}
           ${line('Résultat', `${d.profit >= 0 ? '+' : ''}${money(d.profit)}`, d.profit >= 0 ? 'big pos' : 'big neg')}
         </div>
         <div class="chips"><span>🧺 ${d.served} clients</span><span>📦 ${d.sold} articles</span>${d.missing ? `<span class="warn">❓ ${d.missing} introuvables</span>` : ''}${d.angry ? `<span class="warn">😠 ${d.angry} partis fâchés</span>` : ''}${d.staffErrors ? `<span class="warn">🧾 ${d.staffErrors} erreur${d.staffErrors > 1 ? 's' : ''} de caisse</span>` : ''}<span>${popIcon(d.reputation)} popularité ${Math.round(d.reputation)} %</span></div>
         ${popRows(d.rep)}
+        ${d.goals && d.goals.length ? `<div class="sumgoals"><b>🎯 Objectifs : ${d.goals.filter((x) => x.done).length}/${d.goals.length}${d.goalCoins ? ` · +${money(d.goalCoins)} pièces` : ''}</b>${d.goals.map((x) => `<span class="${x.done ? 'ok' : 'ko'}">${x.done ? '✔' : '✘'} ${esc(x.label)}</span>`).join('')}</div>` : ''}
         ${d.staffEnding.length ? `<p class="note">Fin de contrat : ${d.staffEnding.map(esc).join(', ')}. Pense à renouveler dans Personnel.</p>` : ''}
         <button class="primary" data-a="next">Préparer le jour ${d.day + 1}</button>`;
     }
@@ -600,6 +656,7 @@ export class UI {
 
   showSummary(summary) {
     this.close();
+    this.g.cancelMove();
     this.queueModal({ kind: 'summary', data: summary });
   }
 
@@ -616,6 +673,11 @@ export class UI {
 
   handleTapResult(res) {
     if (!res) return;
+    if (res.moveDone) {
+      this.toast('Étagère déplacée ✔️');
+      haptic(20);
+      return;
+    }
     if (res.open) this.open(res.open, res);
     if (res.moved && this.sheet) this.close();
   }

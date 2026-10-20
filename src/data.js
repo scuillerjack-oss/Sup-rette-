@@ -144,8 +144,30 @@ export function buyChance(ratio) {
 export function popularityFactor(reputation) {
   return 0.55 + (Math.max(0, Math.min(100, reputation)) / 100) * 0.9;
 }
-export function customersPerDay(state, stockedTypes) {
-  return Math.max(4, Math.round((13 + 1.9 * stockedTypes + Math.min(10, state.level * 0.6)) * popularityFactor(state.reputation)));
+// « mult » : multiplicateur du jour (événement de quartier ; plus tard, les concurrents de la V1.3).
+export function customersPerDay(state, stockedTypes, mult = 1) {
+  return Math.max(4, Math.round((13 + 1.9 * stockedTypes + Math.min(10, state.level * 0.6)) * popularityFactor(state.reputation) * mult));
+}
+
+// --- Événements de quartier (V1.2) ------------------------------------------
+// Un jour sur deux environ, à partir du jour 3. Moyenne des effets proche de 1 : l'équilibre ne bouge pas.
+//  clients : multiplicateur du nombre de clients ; extra : articles en plus par client ;
+//  wanted : produits que presque tout le monde ajoute à sa liste ; tolerance : prix tolérés plus hauts.
+export const EVENTS = [
+  { id: 'marche', icon: '🧺', name: 'Jour de marché', desc: '+30 % de clients aujourd’hui', clients: 1.3 },
+  { id: 'pluie', icon: '🌧️', name: 'Jour de pluie', desc: 'Moins de clients (−25 %), mais de plus gros paniers', clients: 0.75, extra: 1 },
+  { id: 'match', icon: '⚽', name: 'Soir de match', desc: 'Chips et soda s’arrachent', clients: 1, wanted: ['chips', 'soda'] },
+  { id: 'canicule', icon: '☀️', name: 'Canicule', desc: 'Tout le monde veut de l’eau et du jus', clients: 1, wanted: ['eau', 'jus'] },
+  { id: 'paie', icon: '💶', name: 'Jour de paie', desc: 'Les clients regardent moins les prix', clients: 1, tolerance: 0.1 }
+];
+export const EVENT_BY_ID = Object.fromEntries(EVENTS.map((e) => [e.id, e]));
+
+// --- Objectifs du jour (V1.2) ------------------------------------------------
+// 3 objectifs par jour, payés en pièces au bilan. Prime modeste : elle ne doit pas casser le rythme.
+export const GOALS_PER_DAY = 3;
+export const GOALS_FROM_DAY = 3; // après les premiers jours de découverte, comme les événements
+export function goalReward(level) {
+  return Math.round(1 + 0.4 * level);
 }
 
 export const DELIVERY_SECONDS = 10; // délai de livraison (temps réel, ×vitesse)

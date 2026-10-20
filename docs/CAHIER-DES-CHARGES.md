@@ -45,10 +45,50 @@ V1.1.0 — 20/10/2026 (retours de bêta de Jack) :
   (×0,55 au plus bas, ×1,45 au sommet). Détail par cause dans le bilan de fin de journée.
 - Rythme vérifié au robot : niveau 5 vers le jour 8, niveau 10 vers le jour 31 (avant : 7 et 29).
 
-## Prochaine version (V1.2, demandée par Jack)
-1. Graphismes : monter nettement le niveau (priorité n°2 de Jack après le bug du « + »).
-2. Concurrents dans le quartier, à terme : des magasins rivaux qui prennent des clients si ta popularité baisse.
+V1.2.0 — 20/10/2026 (demandes de Jack du 20/10) :
+- **Déplacer une étagère déjà placée**, gratuitement : bouton « Déplacer cette étagère » dans la fiche d'un rayon,
+  ou « Déplacer » dans Aménager (on touche l'étagère, puis un « + » libre). Le produit et la quantité suivent.
+  Bandeau orange avec « Annuler », grosses cibles (toucher tolérant élargi), halos au sol : étagère choisie en orange,
+  « + » libres en vert. Refusé avec un message clair si tu remplis ce rayon, si le magasinier le remplit, si un client
+  s'y sert, ou si quelqu'un passe sur l'emplacement visé. Les chemins de tout le monde sont recalculés
+  (clients et magasinier qui allaient vers l'ancien emplacement vont au nouveau).
+- **Graphismes 3D refaits** (toujours low-poly, sans fichier externe) : lumière chaude et ombres douces, sol carrelé
+  crème avec reflets des plafonniers, murs avec soubassement, plinthes et vitres, enseigne à ampoules, store banne rayé,
+  gondoles bois et métal, articles reconnaissables par forme (bouteilles, canettes, sachets, briques de lait,
+  bocaux, meules…) qui remplissent les rayons par le haut, réserve avec palettes et racks, bureau avec lampe et plante,
+  caisses en bois avec tapis, terminal, présentoir à bonbons et sacs, affiche promo, horloge, plantes, paniers.
+  Personnages refaits (grosse tête, bras et jambes articulés, yeux, joues, lunettes pour certains) et animés :
+  marche, bras qui se tendent pour se servir, gestes de mise en rayon, caissière qui scanne, petit saut des clients
+  contents, client qui repart avec son sac. Étiquette de prix jaune quand le prix est bas.
+  **Performances** : décor fusionné par matériau et articles instanciés : ~90 appels de rendu en préparation et ~150 dans
+  un magasin plein (V1.1 : 330 à 430 sur la même scène). Qualité adaptative conservée. Repli 2D conservé (sol plus chaud,
+  mode « Déplacer » visible aussi en 2D).
+- **Idée ajoutée : objectifs du jour** (à partir du jour 3) : 3 objectifs tirés au hasard parmi 6 (servir N clients,
+  vendre N articles, rendre la monnaie juste N fois, aucun client fâché, au plus 2 articles introuvables, gagner de la
+  popularité). Petite prime en pièces par objectif réussi (1 + 0,4 × niveau), versée au bilan. Pastille « 🎯 1/3 » en haut
+  à gauche du magasin, fiche détaillée, récapitulatif dans le bilan.
+- **Idée ajoutée : événements de quartier** (un jour sur deux environ, à partir du jour 3), annoncés le matin :
+  jour de marché (+30 % de clients), jour de pluie (−25 % de clients mais plus gros paniers), soir de match (chips et
+  soda très demandés), canicule (eau et jus), jour de paie (clients moins regardants sur les prix). Effet moyen neutre.
+- Sauvegarde : clé `superette-save-v1` inchangée ; une partie V1.1 se charge (objectifs créés à la volée, données
+  abîmées ignorées). Tests : 22 tests Node (déplacement, refus, chemins toujours atteignables pendant une journée avec
+  déplacements, mode au doigt, événements, objectifs, migration, rythme du robot). Parcours réel vérifié au doigt en
+  Chrome mobile simulé (390×844), en 3D et en 2D.
+- Rythme mesuré au robot (moyenne de 24 parties) : niveau 5 vers le jour 8, niveau 10 vers le jour 29-30
+  (V1.1 mesurée de la même façon : 30-31). Le léger gain vient des primes d'objectifs ; si c'est trop rapide en bêta,
+  baisser `goalReward` dans `src/data.js`.
+- Concurrents (V1.3) : le branchement est prêt. Le nombre de clients passe par `customersPerDay(état, choix, mult)` et
+  `Game.dayMultiplier()` ; un concurrent n'aura qu'à multiplier ce facteur selon la popularité (déjà de 0 à 100,
+  effet ×0,55 à ×1,45) et à ajouter sa cause dans le détail de popularité.
+
+## Prochaine version (V1.3)
+1. **Concurrents dans le quartier** : 1 puis 2 magasins rivaux qui apparaissent avec la progression ; ils prennent des
+   clients quand ta popularité est plus basse que la leur (facteur dans `dayMultiplier()`), font parfois des promos,
+   et apparaissent dans le bilan (« Le Discount d'en face t'a pris 6 clients »).
+2. Retours de bêta de Jack sur les graphismes V1.2, les objectifs et les événements (on garde, on ajuste ou on enlève).
+3. Proposé : un écran « Mon quartier » simple (popularité comparée aux concurrents, événement du jour).
+4. Proposé : réglage « graphismes économes » manuel dans le menu, pour les téléphones très modestes.
 
 ## Pistes suivantes
-Gains hors ligne, frigos et produits frais, prix du marché qui bougent, objectifs du jour, décoration, musique
+Gains hors ligne, frigos et produits frais, prix du marché qui bougent, décoration, musique
 choisie à l’oreille par Jack, fiche Google Play.
