@@ -71,7 +71,9 @@ V1.2.0 — 20/10/2026 (demandes de Jack du 20/10) :
   jour de marché (+30 % de clients), jour de pluie (−25 % de clients mais plus gros paniers), soir de match (chips et
   soda très demandés), canicule (eau et jus), jour de paie (clients moins regardants sur les prix). Effet moyen neutre.
 - Sauvegarde : clé `superette-save-v1` inchangée ; une partie V1.1 se charge (objectifs créés à la volée, données
-  abîmées ignorées). Tests : 22 tests Node (déplacement, refus, chemins toujours atteignables pendant une journée avec
+  abîmées ignorées). Relecture indépendante : aucun point bloquant ; corrigé dans la foulée : repli 2D propre si la 3D
+  plante au démarrage, rechargement si Android coupe le contexte 3D, objectif « monnaie juste » jamais tiré quand
+  toutes les caisses ont un caissier, refus si quelqu'un est à cheval sur l'emplacement visé. Tests : 24 tests Node (déplacement, refus, chemins toujours atteignables pendant une journée avec
   déplacements, mode au doigt, événements, objectifs, migration, rythme du robot). Parcours réel vérifié au doigt en
   Chrome mobile simulé (390×844), en 3D et en 2D.
 - Rythme mesuré au robot (moyenne de 24 parties) : niveau 5 vers le jour 8, niveau 10 vers le jour 29-30

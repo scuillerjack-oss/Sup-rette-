@@ -72,10 +72,12 @@ test('déplacer une étagère : chemins recalculés, tout le monde reste atteign
   for (let i = 0; i < 8; i++) g.spawnCustomer();
   let moves = 0;
   for (let t = 0; t < 4000 && g.state.phase !== 'summary'; t++) {
-    if (t % 40 === 0) {
+    if (t % 10 === 0) {
       const from = g.state.shelves[t % g.state.shelves.length].slot;
       const free = g.freeSlots();
-      if (free.length && g.moveShelf(from, free[(t / 40) % free.length | 0].id).ok) moves++;
+      for (let k = 0; k < free.length; k++) {
+        if (g.moveShelf(from, free[((t / 10) + k) % free.length | 0].id).ok) { moves++; break; }
+      }
       // chaque personnage peut toujours rejoindre la porte, et sa destination
       for (const a of [g.player, ...g.customers]) {
         const tl = g.tileOf(a);
@@ -203,4 +205,24 @@ test('robot : rythme proche de la V1.1 (niveau 10 vers le jour 31)', () => {
   for (let i = 0; i < 3; i++) days.push(playBot({ days: 45 }).marks.level10 ?? 99);
   const avg = days.reduce((a, b) => a + b, 0) / days.length;
   assert.ok(avg >= 26 && avg <= 36, `niveau 10 au jour ${avg.toFixed(1)} (${days.join(', ')})`);
+});
+
+test('relecture : objectif « monnaie juste » jamais tiré si toutes les caisses ont un caissier', () => {
+  const g = new Game();
+  g.state.day = 10;
+  g.state.level = 4;
+  g.state.staff.cashiers = [{ id: 9, name: 'Léa', level: 1, days: 5, look: 0 }];
+  for (let i = 0; i < 150; i++) {
+    g.planDay();
+    assert.ok(!g.state.goals.list.some((x) => x.kind === 'perfect'));
+  }
+});
+
+test('relecture : déplacement refusé si quelqu’un est à cheval sur l’emplacement visé', () => {
+  const g = new Game();
+  g.state.shelves[0] = { slot: 'A3', product: 'eau', qty: 4 };
+  g.player.x = 1; g.player.y = 3.6; // entre la ligne 3 (emplacement A1) et la ligne 4
+  assert.match(g.moveShelf('A3', 'A1').reason, /passe/);
+  g.player.y = 4.4;
+  assert.ok(g.moveShelf('A3', 'A1').ok);
 });

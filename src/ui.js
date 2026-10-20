@@ -189,6 +189,7 @@ export class UI {
       this.last.goals = gk;
       const btn = $('#btnGoals');
       btn.hidden = !gs.length && !ev;
+      if (this.sheet && this.sheet.kind === 'goals') this.refreshSheet();
       btn.innerHTML = `${gs.length ? `<span>🎯 ${gs.filter((x) => x.done).length}/${gs.length}</span>` : ''}${ev ? `<span class="ev">${ev.icon} ${esc(ev.name)}</span>` : ''}`;
     }
     // Bulle « à la caisse »

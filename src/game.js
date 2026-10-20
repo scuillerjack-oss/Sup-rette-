@@ -575,7 +575,7 @@ export class Game {
       return { ok: false, reason: 'Un client se sert dans ce rayon : réessaie dans un instant' };
     }
     const agents = [this.player, this.stocker, ...this.customers].filter(Boolean);
-    if (agents.some((a) => { const t = this.tileOf(a); return t.r === to.r && t.c === to.c; })) {
+    if (agents.some((a) => Math.abs(a.x - to.c) < 0.85 && Math.abs(a.y - to.r) < 0.85)) {
       return { ok: false, reason: 'Quelqu’un passe à cet endroit : réessaie dans un instant' };
     }
     return { ok: true, shelf, from, to };
@@ -678,7 +678,9 @@ export class Game {
       stock: 2,
       pop: s.reputation > 85 ? 0.5 : s.reputation > 60 ? 1 : 2
     };
-    const kinds = Object.keys(GOAL_KINDS);
+    // « Monnaie juste » seulement si le joueur peut encore tenir une caisse lui-même.
+    const allStaffed = s.staff.cashiers.filter((c) => c.days > 0).length >= s.registers.length;
+    const kinds = Object.keys(GOAL_KINDS).filter((k) => !(k === 'perfect' && allStaffed));
     const list = [];
     while (s.day >= GOALS_FROM_DAY && list.length < GOALS_PER_DAY) {
       const k = kinds.splice(Math.floor(Math.random() * kinds.length), 1)[0];
