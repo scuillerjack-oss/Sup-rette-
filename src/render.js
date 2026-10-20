@@ -211,12 +211,12 @@ export class Renderer {
     // Sol de la boutique : carrelage
     for (let r = 3; r < 14; r++) {
       for (let c = 0; c < COLS; c++) {
-        ctx.fillStyle = (r + c) % 2 ? '#f4f7f5' : '#e6eeea';
+        ctx.fillStyle = (r + c) % 2 ? '#f6f0e4' : '#e9e1d1';
         ctx.fillRect(X(c), Y(r), T + 0.5, T + 0.5);
       }
     }
     // Joints discrets
-    ctx.strokeStyle = 'rgba(70,110,100,0.08)';
+    ctx.strokeStyle = 'rgba(120,96,70,0.14)';
     ctx.lineWidth = 1;
     for (let r = 3; r <= 14; r++) { ctx.beginPath(); ctx.moveTo(X(0), Y(r)); ctx.lineTo(X(COLS), Y(r)); ctx.stroke(); }
     for (let c = 0; c <= COLS; c++) { ctx.beginPath(); ctx.moveTo(X(c), Y(3)); ctx.lineTo(X(c), Y(14)); ctx.stroke(); }
@@ -398,6 +398,31 @@ export class Renderer {
       for (const cr of cashierRegs) if (cr.staff.r === r) this.drawPerson(cr.staff.c, cr.staff.r, { kind: 'cashier', dir: -1, walk: 0 });
       for (const a of agents) {
         if (Math.round(a.y) === r) this.drawPerson(a.x, a.y, a);
+      }
+    }
+
+    // Mode « Déplacer une étagère » : étagère choisie en orange, « + » libres qui pulsent
+    if (g.moving) {
+      const k = 0.5 + 0.5 * Math.sin(this.time * 6);
+      if (g.moving.from) {
+        const sl = SHELF_SLOTS.find((x) => x.id === g.moving.from);
+        ctx.strokeStyle = `rgba(255,122,26,${0.6 + 0.4 * k})`;
+        ctx.lineWidth = 4;
+        rr(ctx, X(sl.c) + 1, Y(sl.r) - T * 0.45, T - 2, T * 1.4, 7); ctx.stroke();
+        for (const fs of g.freeSlots()) {
+          ctx.fillStyle = `rgba(43,209,160,${0.18 + 0.2 * k})`;
+          rr(ctx, X(fs.c) + 3, Y(fs.r) + 3, T - 6, T - 6, 7); ctx.fill();
+          ctx.strokeStyle = 'rgba(30,150,115,0.9)';
+          ctx.lineWidth = 2.5;
+          rr(ctx, X(fs.c) + 3, Y(fs.r) + 3, T - 6, T - 6, 7); ctx.stroke();
+        }
+      } else {
+        for (const sh of s.shelves) {
+          const sl = SHELF_SLOTS.find((x) => x.id === sh.slot);
+          ctx.strokeStyle = `rgba(255,150,80,${0.35 + 0.4 * k})`;
+          ctx.lineWidth = 3;
+          rr(ctx, X(sl.c) + 1, Y(sl.r) - T * 0.45, T - 2, T * 1.4, 7); ctx.stroke();
+        }
       }
     }
 

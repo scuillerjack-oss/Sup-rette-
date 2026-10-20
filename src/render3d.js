@@ -1,4 +1,6 @@
-// Rendu 3D low-poly (Three.js) : magasin vu de haut en biais, lumière douce et ombres.
+// Rendu 3D low-poly (Three.js) : magasin vu de haut en biais, lumière chaude et ombres douces.
+// V1.2 : décor fusionné par matériau (peu d'appels de rendu), articles reconnaissables instanciés,
+// personnages mieux proportionnés et animés, petites touches de vie (plantes, affiches, sacs).
 // Les textes (prix, bulles, alertes, gains) sont dessinés sur un calque 2D par-dessus.
 import { COLS, ROWS, DELIVERY_SPOTS, COMPUTER, ZONES, SHELF_SLOTS, SHELF_CAPACITY, REGISTERS, PRODUCT_BY_ID, PRODUCTS, DOOR, SPOT_STACK } from './data.js';
 import { drawProduct, money } from './render.js';
@@ -18,19 +20,20 @@ function rr2(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function lighten(hex, amt) {
+function mix(hex, amt, to = 255) {
   const n = parseInt(hex.slice(1), 16);
   let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-  r += (255 - r) * amt; g += (255 - g) * amt; b += (255 - b) * amt;
-  return `rgb(${r | 0},${g | 0},${b | 0})`;
+  r += (to - r) * amt; g += (to - g) * amt; b += (to - b) * amt;
+  return `#${[r, g, b].map((v) => Math.max(0, Math.min(255, v | 0)).toString(16).padStart(2, '0')).join('')}`;
 }
+const lighten = (hex, a) => mix(hex, a, 255);
+const darken = (hex, a) => mix(hex, a, 0);
 
-// Proportions des articles en rayon selon la forme (largeur, hauteur, profondeur).
-const ITEM_DIMS = {
-  bottle: [0.14, 0.3, 0.14], can: [0.14, 0.2, 0.14], bag: [0.22, 0.26, 0.1], box: [0.2, 0.28, 0.08],
-  carton: [0.15, 0.27, 0.15], pack: [0.24, 0.2, 0.1], bar: [0.24, 0.1, 0.14], tube: [0.12, 0.26, 0.1],
-  jar: [0.16, 0.2, 0.16], wheel: [0.24, 0.12, 0.2]
-};
+// Pseudo-hasard stable (même décor à chaque reconstruction).
+function hash(n) {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
 
 export function webglAvailable() {
   try {
@@ -38,6 +41,160 @@ export function webglAvailable() {
     return !!(window.THREE && (c.getContext('webgl2') || c.getContext('webgl')));
   } catch (e) {
     return false;
+  }
+}
+
+// ---------------------------------------------------------------- fusion de géométries
+// On empile des pièces simples (boîtes, cylindres…) colorées par sommet, puis on les fusionne
+// en UNE géométrie par matériau : un seul appel de rendu pour tout le décor d'un même matériau.
+class Batch {
+  constructor(T) {
+    this.T = T;
+    this.buckets = new Map();
+    this.m = new T.Matrix4();
+    this.q = new T.Quaternion();
+    this.e = new T.Euler();
+    this.v = new T.Vector3();
+    this.s = new T.Vector3();
+    this.c = new T.Color();
+  }
+  // base : matrice du groupe (ou null) ; o : { x, y, z, rx, ry, rz, sx, sy, sz }
+  add(bucket, geo, color, o = {}, base = null) {
+    const T = this.T;
+    this.e.set(o.rx || 0, o.ry || 0, o.rz || 0);
+    this.q.setFromEuler(this.e);
+    this.v.set(o.x || 0, o.y || 0, o.z || 0);
+    this.s.set(o.sx ?? 1, o.sy ?? 1, o.sz ?? 1);
+    const m = new T.Matrix4().compose(this.v, this.q, this.s);
+    if (base) m.premultiply(base);
+    let list = this.buckets.get(bucket);
+    if (!list) this.buckets.set(bucket, (list = []));
+    list.push({ geo, color, m });
+  }
+  // Boîte : dimensions réelles w × h × d, posée sur y (bas de la boîte).
+  box(bucket, color, w, h, d, x, y, z, base = null, extra = {}) {
+    this.add(bucket, Batch.geo(this.T, 'box'), color, { x, y: y + h / 2, z, sx: w, sy: h, sz: d, ...extra }, base);
+  }
+  merge() {
+    const T = this.T;
+    const out = new Map();
+    for (const [bucket, list] of this.buckets) {
+      let n = 0;
+      const geos = list.map((p) => {
+        const g = (p.geo.index ? p.geo.toNonIndexed() : p.geo.clone());
+        g.applyMatrix4(p.m);
+        n += g.attributes.position.count;
+        return g;
+      });
+      const pos = new Float32Array(n * 3);
+      const nor = new Float32Array(n * 3);
+      const col = new Float32Array(n * 3);
+      let k = 0;
+      geos.forEach((g, i) => {
+        const c = this.c.set(list[i].color);
+        const cnt = g.attributes.position.count;
+        pos.set(g.attributes.position.array, k * 3);
+        nor.set(g.attributes.normal.array, k * 3);
+        for (let j = 0; j < cnt; j++) {
+          col[(k + j) * 3] = c.r; col[(k + j) * 3 + 1] = c.g; col[(k + j) * 3 + 2] = c.b;
+        }
+        k += cnt;
+        g.dispose();
+      });
+      const geo = new T.BufferGeometry();
+      geo.setAttribute('position', new T.BufferAttribute(pos, 3));
+      geo.setAttribute('normal', new T.BufferAttribute(nor, 3));
+      geo.setAttribute('color', new T.BufferAttribute(col, 3));
+      geo.computeBoundingSphere();
+      out.set(bucket, geo);
+    }
+    this.buckets.clear();
+    return out;
+  }
+  // Géométries de base partagées (taille unité).
+  static geo(T, kind) {
+    const cache = Batch.cache || (Batch.cache = new Map());
+    let g = cache.get(kind);
+    if (g) return g;
+    switch (kind) {
+      case 'box': g = new T.BoxGeometry(1, 1, 1); break;
+      case 'cyl': g = new T.CylinderGeometry(0.5, 0.5, 1, 14); break;
+      case 'cyl8': g = new T.CylinderGeometry(0.5, 0.5, 1, 8); break;
+      case 'cone': g = new T.CylinderGeometry(0.2, 0.5, 1, 14); break;
+      case 'sph': g = new T.SphereGeometry(0.5, 14, 10); break;
+      case 'sphLow': g = new T.SphereGeometry(0.5, 8, 6); break;
+      case 'ico': g = new T.IcosahedronGeometry(0.5, 1); break;
+      case 'prism': g = new T.CylinderGeometry(0.5, 0.5, 1, 3); break;
+      case 'torus': g = new T.TorusGeometry(0.5, 0.08, 6, 14, Math.PI); break;
+      case 'cap': g = new T.SphereGeometry(0.5, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.5); break;
+      default: g = new T.BoxGeometry(1, 1, 1);
+    }
+    cache.set(kind, g);
+    return g;
+  }
+}
+
+// Articles en rayon : silhouette par forme (largeur, hauteur max ≈ 0,3 pour tenir sous la tablette).
+function productParts(b, p, T) {
+  const c = p.color;
+  const G = (k) => Batch.geo(T, k);
+  const dk = darken(c, 0.3);
+  const lt = lighten(c, 0.55);
+  switch (p.shape) {
+    case 'bottle':
+      b.add('i', G('cyl'), lighten(c, 0.35), { y: 0.1, sx: 0.12, sy: 0.2, sz: 0.12 });
+      b.add('i', G('cyl'), c, { y: 0.1, sx: 0.125, sy: 0.08, sz: 0.125 });
+      b.add('i', G('cone'), lighten(c, 0.35), { y: 0.235, sx: 0.12, sy: 0.07, sz: 0.12 });
+      b.add('i', G('cyl8'), '#ffffff', { y: 0.29, sx: 0.045, sy: 0.04, sz: 0.045 });
+      break;
+    case 'can':
+      b.add('i', G('cyl'), c, { y: 0.09, sx: 0.12, sy: 0.17, sz: 0.12 });
+      b.add('i', G('cyl'), '#ffffff', { y: 0.1, sx: 0.122, sy: 0.05, sz: 0.122 });
+      b.add('i', G('cyl'), '#c9d0d6', { y: 0.185, sx: 0.11, sy: 0.02, sz: 0.11 });
+      break;
+    case 'bag':
+      b.add('i', G('sph'), c, { y: 0.13, sx: 0.2, sy: 0.25, sz: 0.1 });
+      b.box('i', dk, 0.17, 0.035, 0.05, 0, 0.245, 0);
+      b.add('i', G('cyl'), lt, { y: 0.13, z: 0.045, rx: Math.PI / 2, sx: 0.09, sy: 0.02, sz: 0.09 });
+      break;
+    case 'box':
+      b.box('i', c, 0.17, 0.26, 0.07, 0, 0, 0);
+      b.box('i', dk, 0.172, 0.05, 0.072, 0, 0.21, 0);
+      b.box('i', '#fff8ec', 0.12, 0.08, 0.01, 0, 0.09, 0.036);
+      break;
+    case 'carton':
+      b.box('i', c, 0.12, 0.19, 0.12, 0, 0, 0);
+      b.add('i', G('prism'), dk, { y: 0.21, rx: -Math.PI / 2, sx: 0.14, sy: 0.12, sz: 0.08 });
+      b.box('i', p.id === 'lait' ? '#3a7bd5' : '#ffffff', 0.122, 0.05, 0.122, 0, 0.06, 0);
+      b.add('i', G('cyl8'), '#ffffff', { y: 0.255, x: 0.03, sx: 0.03, sy: 0.03, sz: 0.03 });
+      break;
+    case 'pack':
+      b.box('i', c, 0.2, 0.15, 0.09, 0, 0, 0);
+      b.box('i', lt, 0.13, 0.06, 0.01, 0, 0.05, 0.046);
+      b.box('i', dk, 0.202, 0.03, 0.092, 0, 0.12, 0);
+      break;
+    case 'bar':
+      b.box('i', c, 0.2, 0.07, 0.11, 0, 0, 0);
+      b.box('i', lt, 0.05, 0.072, 0.112, 0, 0, 0);
+      b.box('i', c, 0.19, 0.06, 0.1, 0, 0.07, -0.005);
+      break;
+    case 'tube':
+      b.add('i', G('cyl'), c, { y: 0.12, sx: 0.11, sy: 0.22, sz: 0.07 });
+      b.add('i', G('cyl'), lt, { y: 0.12, sx: 0.112, sy: 0.07, sz: 0.072 });
+      b.add('i', G('cyl8'), '#ffffff', { y: 0.255, sx: 0.06, sy: 0.05, sz: 0.06 });
+      break;
+    case 'jar':
+      b.add('i', G('cyl'), c, { y: 0.085, sx: 0.14, sy: 0.17, sz: 0.14 });
+      b.add('i', G('cyl'), '#fff8ec', { y: 0.08, sx: 0.142, sy: 0.06, sz: 0.142 });
+      b.add('i', G('cyl'), p.id === 'bonbons' ? '#ffffff' : '#e3c26a', { y: 0.19, sx: 0.13, sy: 0.04, sz: 0.13 });
+      break;
+    case 'wheel':
+      b.add('i', G('cyl'), c, { y: 0.045, sx: 0.21, sy: 0.09, sz: 0.21 });
+      b.add('i', G('cyl'), lighten(c, 0.3), { y: 0.092, sx: 0.19, sy: 0.006, sz: 0.19 });
+      b.box('i', '#d9533b', 0.06, 0.03, 0.005, 0, 0.03, 0.105);
+      break;
+    default:
+      b.box('i', c, 0.16, 0.22, 0.1, 0, 0, 0);
   }
 }
 
@@ -60,38 +217,56 @@ export class Renderer3D {
     const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 1.0;
+    r.toneMappingExposure = 1.08;
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer = r;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#bfe3e8');
+    scene.background = new THREE.Color('#e9dcc6');
     this.scene = scene;
     this.camera = new THREE.PerspectiveCamera(FOV, 1, 0.5, 200);
     this.dist = 30;
     this.target = new THREE.Vector3(COLS / 2, 0.45, ROWS / 2 - 0.3);
 
-    // Lumières : ciel doux + soleil de fin de matinée qui donne des ombres courtes.
-    scene.add(new THREE.HemisphereLight('#ffffff', '#8a9f98', 1.0));
-    const sun = new THREE.DirectionalLight('#fff1dc', 2.3);
-    sun.position.set(COLS / 2 - 5, 14, ROWS / 2 + 6);
+    // Lumières : ciel chaud + soleil de fin d'après-midi (ombres douces) + contre-jour frais.
+    scene.add(new THREE.HemisphereLight('#fff3e2', '#b59f86', 1.15));
+    const sun = new THREE.DirectionalLight('#ffe1b8', 2.1);
+    sun.position.set(COLS / 2 - 6, 15, ROWS / 2 + 5);
     sun.target.position.set(COLS / 2, 0, ROWS / 2);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1536, 1536);
     const sc = sun.shadow.camera;
     sc.left = -10; sc.right = 10; sc.top = 11; sc.bottom = -11; sc.near = 1; sc.far = 40;
-    sun.shadow.bias = -0.0008;
-    sun.shadow.normalBias = 0.02;
+    sun.shadow.bias = -0.0006;
+    sun.shadow.normalBias = 0.025;
+    sun.shadow.radius = 3;
     scene.add(sun, sun.target);
+    this.sun = sun;
+    const fill = new THREE.DirectionalLight('#d6e6ff', 0.45);
+    fill.position.set(COLS + 6, 8, -4);
+    scene.add(fill);
 
     this.ray = new THREE.Raycaster();
     this.groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     this.pickables = [];
+    this.pickMat = new THREE.MeshBasicMaterial({ visible: false });
+
+    // Matériaux partagés (couleurs par sommet)
+    this.vm = {
+      paint: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.72, metalness: 0 }),
+      satin: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.42, metalness: 0.05 }),
+      metal: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.32, metalness: 0.55 }),
+      glow: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
+      glass: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.08, metalness: 0.1, transparent: true, opacity: 0.45, depthWrite: false }),
+      item: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.02 }),
+      skin: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62 })
+    };
 
     this.world = new THREE.Group(); // éléments qui dépendent de l'aménagement
     scene.add(this.world);
     this.buildConstant();
+    this.buildHalos();
 
     this.agentObjs = new Map();
     this.itemMeshes = new Map();
@@ -109,14 +284,6 @@ export class Renderer3D {
       m = new this.T3.MeshStandardMaterial({ color, roughness: opts.rough ?? 0.75, metalness: opts.metal ?? 0, emissive: opts.emissive || '#000000' });
       this.mats.set(k, m);
     }
-    return m;
-  }
-
-  box(w, h, d, material, x, y, z, { shadow = true, receive = true } = {}) {
-    const m = new this.T3.Mesh(new this.T3.BoxGeometry(w, h, d), material);
-    m.position.set(x, y, z);
-    m.castShadow = shadow;
-    m.receiveShadow = receive;
     return m;
   }
 
@@ -146,37 +313,76 @@ export class Renderer3D {
     return cv;
   }
 
+  // Ajoute les géométries fusionnées d'un Batch à un parent.
+  addBatch(batch, parent, { shadow = true, receive = true } = {}) {
+    const meshes = [];
+    for (const [bucket, geo] of batch.merge()) {
+      const m = new this.T3.Mesh(geo, this.vm[bucket] || this.vm.paint);
+      m.castShadow = shadow && bucket !== 'glass' && bucket !== 'glow';
+      m.receiveShadow = receive && bucket !== 'glow';
+      parent.add(m);
+      meshes.push(m);
+    }
+    return meshes;
+  }
+
+  plane(w, h, tex, x, y, z, opts = {}) {
+    const m = new this.T3.Mesh(new this.T3.PlaneGeometry(w, h), new this.T3.MeshBasicMaterial({ map: tex, transparent: true, toneMapped: false, ...opts }));
+    m.position.set(x, y, z);
+    return m;
+  }
+
+  // Zone touchable invisible (le rayon de toucher vise la case de l'objet).
+  pickBox(w, h, d, x, y, z, tile, parent) {
+    const m = new this.T3.Mesh(Batch.geo(this.T3, 'box'), this.pickMat);
+    m.scale.set(w, h, d);
+    m.position.set(x, y + h / 2, z);
+    m.userData = { tile };
+    m.updateMatrixWorld();
+    parent.add(m);
+    this.pickables.push(m);
+    return m;
+  }
+
   // ---------------------------------------------------------------- décor fixe
   buildConstant() {
     const T = this.T3;
     const s = this.scene;
-    // Trottoir autour
-    const outside = new T.Mesh(new T.PlaneGeometry(40, 40), this.mat('#c9d2cc', { rough: 1 }));
+    const b = new Batch(T);
+    const G = (k) => Batch.geo(T, k);
+
+    // Trottoir pavé autour du magasin
+    const pave = this.canvasTex(512, 512, (c, w, h) => {
+      c.fillStyle = '#d9cfbf'; c.fillRect(0, 0, w, h);
+      for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+        const v = hash(x * 31 + y * 7);
+        c.fillStyle = `rgb(${205 + v * 22 | 0},${195 + v * 20 | 0},${178 + v * 18 | 0})`;
+        c.fillRect(x * 64 + 2 + (y % 2) * 32, y * 64 + 2, 60, 60);
+      }
+    });
+    pave.wrapS = pave.wrapT = T.RepeatWrapping;
+    pave.repeat.set(10, 10);
+    const outside = new T.Mesh(new T.PlaneGeometry(40, 40), new T.MeshStandardMaterial({ map: pave, roughness: 0.95 }));
     outside.rotation.x = -Math.PI / 2;
     outside.position.set(COLS / 2, -0.02, ROWS / 2);
     outside.receiveShadow = true;
     s.add(outside);
 
-    // Sol de la réserve (béton)
+    // Sol de la réserve : béton, palettes, bande de sécurité
     const conc = this.canvasTex(576, 128, (c, w, h) => {
-      c.fillStyle = '#c3c6bf';
-      c.fillRect(0, 0, w, h);
-      for (let i = 0; i < 900; i++) {
-        c.fillStyle = `rgba(${i % 2 ? 255 : 0},${i % 2 ? 255 : 0},${i % 2 ? 255 : 0},${0.03 + (i % 5) * 0.01})`;
-        c.fillRect((i * 97.13) % w, (i * 53.7) % h, 2 + (i % 3), 2);
+      const gr = c.createLinearGradient(0, 0, 0, h);
+      gr.addColorStop(0, '#b9b5ab'); gr.addColorStop(1, '#cbc7bc');
+      c.fillStyle = gr; c.fillRect(0, 0, w, h);
+      for (let i = 0; i < 1400; i++) {
+        c.fillStyle = `rgba(${i % 2 ? 255 : 40},${i % 2 ? 255 : 40},${i % 2 ? 250 : 30},${0.03 + (i % 5) * 0.012})`;
+        c.fillRect((i * 97.13) % w, (i * 53.7) % h, 1 + (i % 3), 1 + (i % 2));
       }
-      // Emplacements de livraison
-      c.strokeStyle = '#e8b62c';
-      c.lineWidth = 4;
-      c.setLineDash([12, 8]);
-      for (const d of DELIVERY_SPOTS) rr2(c, d.c * 64 + 6, 6, 52, 52, 8), c.stroke();
+      c.strokeStyle = 'rgba(232,178,40,0.9)'; c.lineWidth = 3; c.setLineDash([10, 7]);
+      for (const d of DELIVERY_SPOTS) { rr2(c, d.c * 64 + 4, 4, 56, 56, 8); c.stroke(); }
       c.setLineDash([]);
-      // Ligne de sécurité
       for (let x = 0; x < w; x += 24) {
-        c.fillStyle = '#f2c230';
-        c.fillRect(x, h - 10, 12, 10);
-        c.fillStyle = '#2c2c2c';
-        c.fillRect(x + 12, h - 10, 12, 10);
+        c.fillStyle = '#f2c230'; c.fillRect(x, h - 10, 12, 10);
+        c.fillStyle = '#2c2c2c'; c.fillRect(x + 12, h - 10, 12, 10);
       }
     });
     const reserve = new T.Mesh(new T.PlaneGeometry(COLS, 2), new T.MeshStandardMaterial({ map: conc, roughness: 0.95 }));
@@ -184,75 +390,169 @@ export class Renderer3D {
     reserve.position.set(COLS / 2, 0, 2);
     reserve.receiveShadow = true;
     s.add(reserve);
-
-    // Murs
-    const teal = this.mat('#2a6e6a');
-    const wallLight = this.mat('#e7eeeb');
-    s.add(this.box(COLS + 0.4, 1.9, 0.5, teal, COLS / 2, 0.95, 0.75, { shadow: true }));
-    // Haut du mur : grande enseigne du magasin (remplit le haut de l'écran)
-    s.add(this.box(COLS + 0.4, 2.6, 0.3, this.mat('#1f5c5a'), COLS / 2, 3.2, 0.6, { shadow: false }));
-    const big = new T.Mesh(new T.PlaneGeometry(7.6, 1.5), new T.MeshBasicMaterial({
-      map: this.canvasTex(1024, 202, (c, w, h) => {
-        c.fillStyle = '#ffffff';
-        rr2(c, 4, 4, w - 8, h - 8, 40); c.fill();
-        c.fillStyle = '#ff8a3d';
-        rr2(c, 14, 14, w - 28, h - 28, 32); c.fill();
-        c.fillStyle = '#ffffff';
-        c.font = `800 104px ${FONT3}`;
-        c.textAlign = 'center';
-        c.textBaseline = 'middle';
-        c.fillText('Ma P’tite Supérette', w / 2, h / 2 + 8);
-      }),
-      transparent: true
-    }));
-    big.position.set(COLS / 2, 3.15, 0.76);
-    s.add(big);
-    const sign = new T.Mesh(new T.PlaneGeometry(2.4, 0.5), new T.MeshBasicMaterial({
-      map: this.canvasTex(512, 108, (c, w, h) => {
-        c.fillStyle = '#1f5c5a';
-        rr2(c, 0, 0, w, h, 20); c.fill();
-        c.fillStyle = '#ffffff';
-        c.font = `800 64px ${FONT3}`;
-        c.textAlign = 'center';
-        c.textBaseline = 'middle';
-        c.fillText('RÉSERVE', w / 2, h / 2 + 4);
-      }),
-      transparent: true
-    }));
-    sign.position.set(2.2, 1.68, 1.01);
-    s.add(sign);
-    // Étagères murales de la réserve (décor)
-    for (let i = 0; i < 3; i++) s.add(this.box(COLS - 3.2, 0.05, 0.3, this.mat('#9aa6ad'), (COLS - 3.2) / 2 + 0.1, 0.5 + i * 0.4, 1.12, { shadow: false }));
-    for (let i = 0; i < 14; i++) {
-      const col = ['#c99a62', '#d9b07c', '#b8875a'][i % 3];
-      s.add(this.box(0.34, 0.26, 0.24, this.mat(col), 0.35 + (i % 7) * 0.8, 0.66 + Math.floor(i / 7) * 0.4, 1.1, { shadow: false }));
+    for (const d of DELIVERY_SPOTS) {
+      const x = d.c + 0.5, z = d.r + 0.5;
+      for (const dx of [-0.26, 0, 0.26]) b.box('paint', '#b88a55', 0.1, 0.06, 0.62, x + dx, 0, z);
+      for (const dz of [-0.24, 0, 0.24]) b.box('paint', '#c99a62', 0.7, 0.03, 0.14, x, 0.06, z + dz);
     }
-    s.add(this.box(0.25, 1.1, 15.2, wallLight, -0.12, 0.55, ROWS / 2 + 0.2));
-    s.add(this.box(0.25, 1.1, 15.2, wallLight, COLS + 0.12, 0.55, ROWS / 2 + 0.2));
-    // Façade basse vitrée + porte
+
+    // Mur du fond : plâtre crème, soubassement sarcelle, plinthe et corniche
+    const W = COLS + 0.4;
+    b.box('paint', '#f1e6d4', W, 1.9, 0.5, COLS / 2, 0, 0.75);
+    b.box('paint', '#2a6e6a', W, 0.62, 0.52, COLS / 2, 0, 0.75);
+    b.box('satin', '#22595a', W, 0.06, 0.55, COLS / 2, 0.62, 0.75);
+    b.box('satin', '#d8c3a0', W, 0.08, 0.56, COLS / 2, 1.86, 0.75);
+    // Fronton de l'enseigne + guirlande d'ampoules
+    b.box('paint', '#1f5c5a', W, 2.6, 0.3, COLS / 2, 1.9, 0.6, null);
+    b.box('satin', '#174746', W + 0.1, 0.1, 0.36, COLS / 2, 4.46, 0.6);
+    for (let i = 0; i < 17; i++) {
+      const x = 0.5 + i * 0.5;
+      b.add('glow', G('sphLow'), i % 2 ? '#ffe6a8' : '#fff6d8', { x, y: 4.2, z: 0.78, sx: 0.09, sy: 0.09, sz: 0.09 });
+      b.add('glow', G('sphLow'), i % 2 ? '#fff6d8' : '#ffe6a8', { x, y: 2.1, z: 0.78, sx: 0.09, sy: 0.09, sz: 0.09 });
+    }
+    // Étagères murales de la réserve (métal) et stock en vrac
+    for (const x of [0.15, 2.05, 3.95, 5.85]) b.box('metal', '#8b98a1', 0.05, 0.95, 0.05, x, 0, 1.15);
+    for (let i = 0; i < 2; i++) b.box('metal', '#a6b1b8', 5.8, 0.04, 0.34, 3.0, 0.42 + i * 0.44, 1.12);
+    for (let i = 0; i < 14; i++) {
+      const lvl = i % 2, col = Math.floor(i / 2);
+      if (hash(i) < 0.18) continue;
+      const kraft = ['#c99a62', '#d9b07c', '#b8875a', '#cfa36a'][i % 4];
+      const w = 0.42 + hash(i + 3) * 0.24, h = 0.22 + hash(i + 9) * 0.12;
+      b.box('paint', kraft, w, h, 0.28, 0.45 + col * 0.82 + (hash(i + 5) - 0.5) * 0.15, 0.46 + lvl * 0.44, 1.11);
+      b.box('paint', '#f4ead8', w * 0.5, 0.025, 0.285, 0.45 + col * 0.82 + (hash(i + 5) - 0.5) * 0.15, 0.46 + lvl * 0.44 + h * 0.55, 1.11);
+    }
+    // Bacs colorés
+    for (const [x, col] of [[0.6, '#3a7bd5'], [1.35, '#2bb673']]) b.box('satin', col, 0.5, 0.24, 0.32, x, 0.03, 1.12);
+
+    // Murs latéraux : soubassement, vitres, chapeau en bois
+    for (const x of [-0.12, COLS + 0.12]) {
+      b.box('paint', '#f1e6d4', 0.25, 0.62, 15.2, x, 0, ROWS / 2 + 0.2);
+      b.box('satin', '#2a6e6a', 0.27, 0.16, 15.2, x, 0, ROWS / 2 + 0.2);
+      b.box('glass', '#bfe6f0', 0.1, 0.42, 15.2, x, 0.62, ROWS / 2 + 0.2);
+      for (let z = 1; z <= ROWS; z += 1.5) b.box('paint', '#e8dcc6', 0.24, 0.42, 0.08, x, 0.62, z);
+      b.box('paint', '#c9a172', 0.32, 0.07, 15.3, x, 1.04, ROWS / 2 + 0.2);
+    }
+
+    // Façade vitrée, encadrement de porte et portes coulissantes ouvertes
+    const zf = ROWS - 0.55;
     for (let c = 0; c < COLS; c++) {
       if (c === DOOR.c) continue;
-      s.add(this.box(1, 0.3, 0.3, teal, c + 0.5, 0.15, ROWS - 0.55, { shadow: false }));
-      const glass = this.box(0.94, 0.22, 0.04, new T.MeshStandardMaterial({ color: '#a8dbe8', roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.6 }), c + 0.5, 0.42, ROWS - 0.55, { shadow: false });
-      s.add(glass);
+      b.box('paint', '#2a6e6a', 1, 0.24, 0.3, c + 0.5, 0, zf);
+      b.box('glass', '#bfe6f0', 0.96, 0.5, 0.05, c + 0.5, 0.24, zf);
+      b.box('metal', '#3f4a52', 0.05, 0.56, 0.08, c + (c < DOOR.c ? 0.03 : 0.97), 0.24, zf);
+    }
+    b.box('metal', '#3f4a52', W, 0.05, 0.12, COLS / 2, 0.76, zf);
+    for (const dx of [-0.5, 0.5]) b.box('metal', '#3f4a52', 0.08, 0.84, 0.16, DOOR.c + 0.5 + dx, 0, zf);
+    for (const dx of [-0.78, 0.78]) b.box('glass', '#d8f1f6', 0.5, 0.7, 0.03, DOOR.c + 0.5 + dx, 0.03, zf + 0.12);
+    // Store banne rayé (dehors)
+    for (let i = 0; i < 18; i++) {
+      const x = i * 0.5 + 0.25;
+      b.box('paint', i % 2 ? '#ffffff' : '#ff8a3d', 0.5, 0.04, 0.42, x, 0.46, ROWS + 0.12, null, { rx: 0.4 });
+      b.box('paint', i % 2 ? '#f3e9dc' : '#e8742c', 0.5, 0.1, 0.03, x, 0.31, ROWS + 0.32);
     }
     // Tapis d'entrée
-    s.add(this.box(0.9, 0.02, 0.7, this.mat('#4f6266', { rough: 1 }), DOOR.c + 0.5, 0.01, ROWS - 1.45, { shadow: false }));
+    b.box('paint', '#4f6266', 0.9, 0.015, 0.75, DOOR.c + 0.5, 0, ROWS - 1.45);
+    b.box('paint', '#5f7579', 0.8, 0.017, 0.08, DOOR.c + 0.5, 0, ROWS - 1.6);
+    b.box('paint', '#5f7579', 0.8, 0.017, 0.08, DOOR.c + 0.5, 0, ROWS - 1.3);
 
-    // Bureau + ordinateur
-    const desk = new T.Group();
-    desk.add(this.box(1.9, 0.08, 0.7, this.mat('#b8845a'), 0, 0.72, 0));
-    desk.add(this.box(0.08, 0.7, 0.6, this.mat('#8a5e3c'), -0.88, 0.35, 0));
-    desk.add(this.box(0.08, 0.7, 0.6, this.mat('#8a5e3c'), 0.88, 0.35, 0));
-    desk.add(this.box(0.64, 0.42, 0.06, this.mat('#2b3036'), 0.25, 1.06, -0.12));
+    // Plante verte et pile de paniers près de l'entrée
+    const plant = (x, z, k = 1, y0 = 0) => {
+      b.add('paint', G('cyl'), '#c86b3c', { x, y: y0 + 0.12 * k, z, sx: 0.3 * k, sy: 0.24 * k, sz: 0.3 * k });
+      b.add('paint', G('cyl'), '#5b3b26', { x, y: y0 + 0.245 * k, z, sx: 0.26 * k, sy: 0.02, sz: 0.26 * k });
+      for (let i = 0; i < 4; i++) {
+        const a = i * 1.7 + x;
+        b.add('paint', G('ico'), i % 2 ? '#4f9d5a' : '#3d8a4c', { x: x + Math.cos(a) * 0.08 * k, y: y0 + (0.38 + i * 0.06) * k, z: z + Math.sin(a) * 0.08 * k, sx: 0.26 * k, sy: 0.24 * k, sz: 0.26 * k });
+      }
+    };
+    plant(0.3, ROWS - 1.3);
+    for (let i = 0; i < 4; i++) {
+      const y = i * 0.07;
+      b.box('satin', '#e8483d', 0.34, 0.06, 0.24, COLS - 0.3, y, ROWS - 1.35);
+    }
+    b.add('metal', G('torus'), '#2b3036', { x: COLS - 0.3, y: 0.3, z: ROWS - 1.35, sx: 0.28, sy: 0.28, sz: 0.28 });
+
+    // Bureau : plateau bois, tiroirs, écran, clavier, lampe, chaise, plante
+    const bx = COMPUTER.tiles[0].c + 1, bz = COMPUTER.tiles[0].r + 0.45;
+    b.box('satin', '#c48f5e', 1.9, 0.07, 0.7, bx, 0.69, bz);
+    b.box('paint', '#8a5e3c', 0.06, 0.69, 0.62, bx - 0.88, 0, bz);
+    b.box('paint', '#9f6c45', 0.5, 0.69, 0.62, bx + 0.66, 0, bz);
+    for (const y of [0.12, 0.36]) b.box('satin', '#d9a878', 0.44, 0.2, 0.02, bx + 0.66, y, bz + 0.31);
+    b.box('satin', '#2b3036', 0.66, 0.44, 0.05, bx + 0.25, 0.86, bz - 0.12);
+    b.box('satin', '#2b3036', 0.08, 0.16, 0.08, bx + 0.25, 0.76, bz - 0.12);
+    b.box('satin', '#3c4248', 0.42, 0.02, 0.15, bx + 0.2, 0.76, bz + 0.12);
+    b.box('satin', '#e9edf0', 0.08, 0.02, 0.11, bx + 0.52, 0.76, bz + 0.13);
+    b.add('metal', G('cyl8'), '#2b3036', { x: bx - 0.6, y: 0.95, z: bz - 0.15, rz: 0.4, sx: 0.025, sy: 0.4, sz: 0.025 });
+    b.add('satin', G('cone'), '#ff8a3d', { x: bx - 0.5, y: 1.15, z: bz - 0.15, rz: -0.5, sx: 0.16, sy: 0.14, sz: 0.16 });
+    b.add('metal', G('cyl'), '#2b3036', { x: bx - 0.65, y: 0.77, z: bz - 0.15, sx: 0.14, sy: 0.02, sz: 0.14 });
+    plant(bx - 0.72, bz + 0.16, 0.5, 0.76);
+    b.box('paint', '#2d7a73', 0.42, 0.06, 0.4, bx + 0.2, 0.4, bz + 0.3);
+    b.box('paint', '#2d7a73', 0.42, 0.36, 0.06, bx + 0.2, 0.44, bz + 0.5);
+    b.add('metal', G('cyl8'), '#4b555c', { x: bx + 0.2, y: 0.2, z: bz + 0.3, sx: 0.05, sy: 0.4, sz: 0.05 });
+    this.addBatch(b, s);
+    this.pickBox(1.9, 1.2, 0.8, bx, 0, bz, { r: COMPUTER.tiles[0].r, c: COMPUTER.tiles[0].c }, s);
+    for (const d of DELIVERY_SPOTS) this.pickBox(0.9, 1.5, 0.9, d.c + 0.5, 0, d.r + 0.5, { r: d.r, c: d.c }, s);
+
+    // Écran de l'ordinateur (lueur animée)
     this.screenMat = new T.MeshStandardMaterial({ color: '#6edcc8', emissive: '#3fbfa8', emissiveIntensity: 0.8, roughness: 0.4 });
-    desk.add(this.box(0.56, 0.34, 0.01, this.screenMat, 0.25, 1.06, -0.085, { shadow: false }));
-    desk.add(this.box(0.08, 0.18, 0.08, this.mat('#2b3036'), 0.25, 0.83, -0.12));
-    desk.add(this.box(0.4, 0.03, 0.16, this.mat('#3c4248'), 0.2, 0.775, 0.12));
-    desk.position.set(COMPUTER.tiles[0].c + 1, 0, COMPUTER.tiles[0].r + 0.45);
-    desk.traverse((o) => { if (o.isMesh) o.userData = { tile: COMPUTER.tiles[0], constant: true }; });
-    this.pickables.push(...desk.children);
-    s.add(desk);
+    const scr = new T.Mesh(new T.BoxGeometry(0.58, 0.36, 0.01), this.screenMat);
+    scr.position.set(bx + 0.25, 1.08, bz - 0.09);
+    s.add(scr);
+
+    // Enseigne, panneau RÉSERVE, affiche promo, horloge
+    s.add(this.plane(7.6, 1.5, this.canvasTex(1024, 202, (c, w, h) => {
+      c.fillStyle = '#fff7ea'; rr2(c, 4, 4, w - 8, h - 8, 40); c.fill();
+      const gr = c.createLinearGradient(0, 14, 0, h - 14);
+      gr.addColorStop(0, '#ff9d52'); gr.addColorStop(1, '#f2762a');
+      c.fillStyle = gr; rr2(c, 14, 14, w - 28, h - 28, 32); c.fill();
+      c.fillStyle = 'rgba(0,0,0,0.18)';
+      c.font = `800 104px ${FONT3}`; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText('Ma P’tite Supérette', w / 2 + 4, h / 2 + 13);
+      c.fillStyle = '#ffffff';
+      c.fillText('Ma P’tite Supérette', w / 2, h / 2 + 8);
+    }), COLS / 2, 3.15, 0.76));
+    s.add(this.plane(2.2, 0.42, this.canvasTex(512, 98, (c, w, h) => {
+      c.fillStyle = '#1f5c5a'; rr2(c, 0, 0, w, h, 20); c.fill();
+      c.strokeStyle = '#f2c230'; c.lineWidth = 6; rr2(c, 6, 6, w - 12, h - 12, 16); c.stroke();
+      c.fillStyle = '#ffffff'; c.font = `800 60px ${FONT3}`; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText('RÉSERVE', w / 2, h / 2 + 4);
+    }), 2.9, 1.6, 1.01));
+    s.add(this.plane(0.62, 0.8, this.canvasTex(160, 206, (c, w, h) => {
+      c.fillStyle = '#ffd23f'; c.fillRect(0, 0, w, h);
+      c.fillStyle = '#e8483d'; c.beginPath(); c.arc(w / 2, 82, 62, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#fff'; c.font = `800 46px ${FONT3}`; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText('-20%', w / 2, 86);
+      c.fillStyle = '#7a2a12'; c.font = `800 30px ${FONT3}`;
+      c.fillText('PROMO', w / 2, 172);
+    }), 6.55, 1.36, 1.01, { toneMapped: true }));
+    s.add(this.plane(0.4, 0.4, this.canvasTex(128, 128, (c) => {
+      c.fillStyle = '#ffffff'; c.beginPath(); c.arc(64, 64, 60, 0, Math.PI * 2); c.fill();
+      c.lineWidth = 8; c.strokeStyle = '#2b3036'; c.stroke();
+      c.lineCap = 'round'; c.lineWidth = 7;
+      c.beginPath(); c.moveTo(64, 64); c.lineTo(64, 28); c.stroke();
+      c.beginPath(); c.moveTo(64, 64); c.lineTo(90, 72); c.stroke();
+    }), 8.3, 1.55, 1.01, { toneMapped: true }));
+  }
+
+  // Halos au sol (rayon compatible avec le carton porté, mode « Déplacer ») : un seul appel de rendu.
+  buildHalos() {
+    const T = this.T3;
+    const tex = this.canvasTex(128, 128, (c) => {
+      const g = c.createRadialGradient(64, 64, 10, 64, 64, 64);
+      g.addColorStop(0, 'rgba(255,255,255,0.0)');
+      g.addColorStop(0.55, 'rgba(255,255,255,0.55)');
+      g.addColorStop(0.8, 'rgba(255,255,255,0.9)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = g; c.fillRect(0, 0, 128, 128);
+    });
+    const geo = new T.PlaneGeometry(1, 1);
+    geo.rotateX(-Math.PI / 2);
+    this.haloMat = new T.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false, opacity: 0.8 });
+    this.halos = new T.InstancedMesh(geo, this.haloMat, 32);
+    this.halos.count = 0;
+    this.halos.frustumCulled = false;
+    this.halos.renderOrder = 2;
+    this.halos.setColorAt(0, new T.Color('#ffffff'));
+    this.scene.add(this.halos);
   }
 
   // ---------------------------------------------------------------- aménagement (étagères, caisses, sol)
@@ -265,109 +565,181 @@ export class Renderer3D {
     const T = this.T3;
     for (const o of [...this.world.children]) {
       this.world.remove(o);
-      o.traverse((m) => { if (m.isMesh && m.geometry) m.geometry.dispose(); });
+      o.traverse((m) => {
+        if (m.isMesh && m.geometry && m.geometry !== Batch.geo(T, 'box')) m.geometry.dispose();
+        if (m.isMesh && m.userData.ownTex) { m.material.map?.dispose(); m.material.dispose(); }
+      });
     }
-    this.pickables = this.pickables.filter((m) => m.userData.constant || m.userData.carton);
+    this.pickables = this.pickables.filter((m) => m.parent !== this.world && m.parent);
     this.shelfObjs = new Map();
 
-    // Sol de la boutique : carrelage + marquages (emplacements libres, zones fermées)
-    const px = 72;
+    // Sol de la boutique : carrelage chaud, joints, flaques de lumière des plafonniers, marquages
+    const px = 96;
     const rows = ROWS - 3;
-    const floorTex = this.canvasTex(COLS * px, rows * px, (c) => {
+    const floorTex = this.canvasTex(COLS * px, rows * px, (c, w, h) => {
       for (let r = 0; r < rows; r++) for (let col = 0; col < COLS; col++) {
-        c.fillStyle = (r + col) % 2 ? '#f5f8f6' : '#e3ece8';
+        const v = hash(r * 13 + col * 7) * 0.05;
+        const base = (r + col) % 2 ? [246, 240, 228] : [233, 225, 209];
+        c.fillStyle = `rgb(${base[0] - v * 255 | 0},${base[1] - v * 230 | 0},${base[2] - v * 200 | 0})`;
         c.fillRect(col * px, r * px, px, px);
+        const gl = c.createLinearGradient(col * px, r * px, col * px + px, r * px + px);
+        gl.addColorStop(0, 'rgba(255,255,255,0.18)'); gl.addColorStop(1, 'rgba(255,255,255,0)');
+        c.fillStyle = gl; c.fillRect(col * px, r * px, px, px);
       }
-      c.strokeStyle = 'rgba(60,100,90,0.10)';
+      c.strokeStyle = 'rgba(120,96,70,0.22)';
       c.lineWidth = 2;
-      for (let r = 0; r <= rows; r++) { c.beginPath(); c.moveTo(0, r * px); c.lineTo(COLS * px, r * px); c.stroke(); }
-      for (let col = 0; col <= COLS; col++) { c.beginPath(); c.moveTo(col * px, 0); c.lineTo(col * px, rows * px); c.stroke(); }
+      for (let r = 0; r <= rows; r++) { c.beginPath(); c.moveTo(0, r * px); c.lineTo(w, r * px); c.stroke(); }
+      for (let col = 0; col <= COLS; col++) { c.beginPath(); c.moveTo(col * px, 0); c.lineTo(col * px, h); c.stroke(); }
+      // Lumière des plafonniers
+      for (const [cx, cy] of [[2.2, 1.6], [6.8, 1.6], [2.2, 4.6], [6.8, 4.6], [4.5, 7.6], [1.6, 9.3], [7.4, 9.3]]) {
+        const grd = c.createRadialGradient(cx * px, cy * px, 0, cx * px, cy * px, px * 2.4);
+        grd.addColorStop(0, 'rgba(255,248,225,0.55)');
+        grd.addColorStop(1, 'rgba(255,248,225,0)');
+        c.fillStyle = grd;
+        c.fillRect(cx * px - px * 2.5, cy * px - px * 2.5, px * 5, px * 5);
+      }
+      // Ombre portée douce le long des murs
+      const edge = (x0, y0, x1, y1, gx0, gy0, gx1, gy1) => {
+        const gr = c.createLinearGradient(gx0, gy0, gx1, gy1);
+        gr.addColorStop(0, 'rgba(90,70,50,0.22)'); gr.addColorStop(1, 'rgba(90,70,50,0)');
+        c.fillStyle = gr; c.fillRect(x0, y0, x1 - x0, y1 - y0);
+      };
+      edge(0, 0, px * 0.5, h, 0, 0, px * 0.5, 0);
+      edge(w - px * 0.5, 0, w, h, w, 0, w - px * 0.5, 0);
+      // Allées verrouillées
       for (const z of ZONES) {
         if (st.zones.includes(z.id)) continue;
-        const x = px, y = (z.row - 3) * px - px * 0.1, w = px * 7, h = px * 1.2;
+        const x = px, y = (z.row - 3) * px - px * 0.1, ww = px * 7, hh = px * 1.2;
         c.save();
-        rr2(c, x, y, w, h, 16); c.clip();
-        c.fillStyle = 'rgba(40,60,60,0.06)'; c.fillRect(x, y, w, h);
-        c.strokeStyle = 'rgba(242,170,40,0.45)'; c.lineWidth = 14;
-        for (let i = -h; i < w; i += 40) { c.beginPath(); c.moveTo(x + i, y + h); c.lineTo(x + i + h, y); c.stroke(); }
+        rr2(c, x, y, ww, hh, 18); c.clip();
+        c.fillStyle = 'rgba(60,50,40,0.07)'; c.fillRect(x, y, ww, hh);
+        c.strokeStyle = 'rgba(242,170,40,0.5)'; c.lineWidth = 18;
+        for (let i = -hh; i < ww; i += 52) { c.beginPath(); c.moveTo(x + i, y + hh); c.lineTo(x + i + hh, y); c.stroke(); }
         c.restore();
-        c.fillStyle = 'rgba(30,50,50,0.8)';
-        c.font = `800 ${px * 0.36}px ${FONT3}`;
+        c.fillStyle = 'rgba(255,255,255,0.85)';
+        rr2(c, x + ww / 2 - px * 2.1, y + hh / 2 - px * 0.3, px * 4.2, px * 0.6, px * 0.3); c.fill();
+        c.fillStyle = 'rgba(40,50,48,0.9)';
+        c.font = `800 ${px * 0.34}px ${FONT3}`;
         c.textAlign = 'center'; c.textBaseline = 'middle';
-        c.fillText(`🔒 ${z.label} · niveau ${z.level}`, x + w / 2, y + h / 2 + 3);
+        c.fillText(`🔒 ${z.label} · niveau ${z.level}`, x + ww / 2, y + hh / 2 + 3);
       }
+      // Emplacements libres : « + »
       for (const sl of SHELF_SLOTS) {
         if (!st.zones.includes(sl.zone) || st.shelves.some((x) => x.slot === sl.id)) continue;
-        c.strokeStyle = 'rgba(45,122,115,0.45)'; c.lineWidth = 3; c.setLineDash([10, 8]);
-        rr2(c, sl.c * px + 8, (sl.r - 3) * px + 8, px - 16, px - 16, 10); c.stroke(); c.setLineDash([]);
-        c.fillStyle = 'rgba(45,122,115,0.55)'; c.font = `800 ${px * 0.5}px ${FONT3}`;
+        const x0 = sl.c * px, y0 = (sl.r - 3) * px;
+        c.fillStyle = 'rgba(45,122,115,0.08)';
+        rr2(c, x0 + 10, y0 + 10, px - 20, px - 20, 14); c.fill();
+        c.strokeStyle = 'rgba(45,122,115,0.55)'; c.lineWidth = 4; c.setLineDash([12, 9]);
+        rr2(c, x0 + 10, y0 + 10, px - 20, px - 20, 14); c.stroke(); c.setLineDash([]);
+        c.fillStyle = 'rgba(45,122,115,0.75)';
+        c.beginPath(); c.arc(x0 + px / 2, y0 + px / 2, px * 0.2, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#ffffff'; c.font = `800 ${px * 0.36}px ${FONT3}`;
         c.textAlign = 'center'; c.textBaseline = 'middle';
-        c.fillText('+', sl.c * px + px / 2, (sl.r - 3) * px + px / 2 + 2);
+        c.fillText('+', x0 + px / 2, y0 + px / 2 + 2);
       }
       for (const reg of REGISTERS) {
         if (st.registers.includes(reg.id)) continue;
         const x = reg.counter[0].c * px, y = (reg.counter[0].r - 3) * px;
-        c.strokeStyle = 'rgba(45,122,115,0.4)'; c.lineWidth = 3; c.setLineDash([10, 8]);
-        rr2(c, x + 6, y + 6, px * 2 - 12, px - 12, 10); c.stroke(); c.setLineDash([]);
-        c.fillStyle = 'rgba(45,122,115,0.65)'; c.font = `800 ${px * 0.24}px ${FONT3}`;
+        c.strokeStyle = 'rgba(45,122,115,0.45)'; c.lineWidth = 4; c.setLineDash([12, 9]);
+        rr2(c, x + 8, y + 8, px * 2 - 16, px - 16, 12); c.stroke(); c.setLineDash([]);
+        c.fillStyle = 'rgba(45,122,115,0.75)'; c.font = `800 ${px * 0.24}px ${FONT3}`;
         c.textAlign = 'center'; c.textBaseline = 'middle';
         c.fillText(`Caisse 2 · niv. ${reg.level}`, x + px, y + px / 2);
       }
+      // Marquage au sol des files d'attente
+      for (const reg of REGISTERS) {
+        if (!st.registers.includes(reg.id)) continue;
+        c.fillStyle = 'rgba(255,138,61,0.22)';
+        for (const t of [reg.pay, ...reg.queue.slice(0, 2)]) { rr2(c, t.c * px + 26, (t.r - 3) * px + 26, px - 52, px - 52, 10); c.fill(); }
+      }
     });
-    const floor = new T.Mesh(new T.PlaneGeometry(COLS, rows), new T.MeshStandardMaterial({ map: floorTex, roughness: 0.55, metalness: 0.02 }));
+    const floor = new T.Mesh(new T.PlaneGeometry(COLS, rows), new T.MeshStandardMaterial({ map: floorTex, roughness: 0.38, metalness: 0.02 }));
     floor.rotation.x = -Math.PI / 2;
     floor.position.set(COLS / 2, 0, 3 + rows / 2);
     floor.receiveShadow = true;
+    floor.userData.ownTex = true;
     this.world.add(floor);
 
-    // Étagères
+    // Étagères : gondoles bois + métal, fusionnées
+    const b = new Batch(T);
+    const base = new T.Matrix4();
     for (const sh of st.shelves) {
       const sl = SHELF_SLOTS.find((x) => x.id === sh.slot);
-      const grp = new T.Group();
-      const frame = this.mat('#dfe5e9', { rough: 0.5, metal: 0.15 });
-      const dark = this.mat('#8d99a3', { rough: 0.5, metal: 0.2 });
-      grp.add(this.box(0.92, 0.12, 0.66, dark, 0, 0.06, 0));
-      const back = new T.MeshStandardMaterial({ color: '#eef2f4', roughness: 0.6, emissive: '#ff8a3d', emissiveIntensity: 0 });
-      grp.add(this.box(0.92, 1.3, 0.06, back, 0, 0.7, -0.3));
-      grp.add(this.box(0.05, 1.3, 0.66, frame, -0.44, 0.65, 0));
-      grp.add(this.box(0.05, 1.3, 0.66, frame, 0.44, 0.65, 0));
-      for (const y of [0.14, 0.52, 0.9]) grp.add(this.box(0.86, 0.035, 0.58, frame, 0, y, 0.02, { shadow: false }));
-      const header = new T.MeshStandardMaterial({ color: '#9aa7b0', roughness: 0.5 });
-      grp.add(this.box(0.92, 0.2, 0.08, header, 0, 1.42, -0.27));
-      grp.position.set(sl.c + 0.5, 0, sl.r + 0.5);
-      grp.traverse((o) => { if (o.isMesh) o.userData.tile = { r: sl.r, c: sl.c }; });
-      this.pickables.push(...grp.children);
-      this.world.add(grp);
-      this.shelfObjs.set(sh.slot, { grp, back, header, slot: sl });
+      base.makeTranslation(sl.c + 0.5, 0, sl.r + 0.5);
+      b.box('paint', '#5d6b74', 0.92, 0.1, 0.62, 0, 0, 0.02, base);
+      b.box('paint', '#8fb3ae', 0.9, 1.32, 0.06, 0, 0.08, -0.3, base);
+      for (let i = 0; i < 5; i++) b.box('paint', '#7fa39e', 0.88, 0.012, 0.005, 0, 0.3 + i * 0.22, -0.267, base);
+      for (const x of [-0.44, 0.44]) {
+        b.box('satin', '#c99a62', 0.05, 1.42, 0.64, x, 0, 0.0, base);
+        b.box('satin', '#b5844f', 0.055, 0.06, 0.66, x, 1.42, 0.0, base);
+      }
+      for (const y of [0.12, 0.5, 0.88]) {
+        b.box('metal', '#dfe4e8', 0.84, 0.03, 0.58, 0, y, 0.02, base);
+        b.box('satin', '#ffffff', 0.84, 0.05, 0.015, 0, y - 0.025, 0.31, base);
+      }
+      this.pickBox(0.96, 1.6, 0.7, sl.c + 0.5, 0, sl.r + 0.5, { r: sl.r, c: sl.c }, this.world);
+      this.shelfObjs.set(sh.slot, { slot: sl });
     }
 
-    // Caisses
+    // Caisses : comptoir bois, tapis, caisse enregistreuse, terminal, présentoir à bonbons, sacs
     for (const reg of REGISTERS) {
       if (!st.registers.includes(reg.id)) continue;
-      const grp = new T.Group();
-      grp.add(this.box(1.9, 0.7, 0.72, this.mat('#3c4a55', { rough: 0.6 }), 0, 0.35, 0));
-      grp.add(this.box(1.94, 0.06, 0.76, this.mat('#56646f', { rough: 0.4, metal: 0.2 }), 0, 0.73, 0));
-      grp.add(this.box(1.15, 0.03, 0.42, this.mat('#1d2328', { rough: 0.9 }), -0.32, 0.775, 0.02, { shadow: false }));
-      grp.add(this.box(0.42, 0.22, 0.42, this.mat('#e9edf0', { rough: 0.4 }), 0.66, 0.87, -0.05));
-      grp.add(this.box(0.34, 0.2, 0.04, this.mat('#2b3036'), 0.66, 1.08, -0.18));
-      grp.add(this.box(0.3, 0.15, 0.01, new T.MeshStandardMaterial({ color: '#6edcc8', emissive: '#3fbfa8', emissiveIntensity: 0.7 }), 0.66, 1.08, -0.155, { shadow: false }));
-      // Petit panneau numéro
-      grp.add(this.box(0.05, 0.9, 0.05, this.mat('#9aa6ad', { metal: 0.4, rough: 0.4 }), -0.9, 1.1, -0.3));
-      const num = new T.Mesh(new T.PlaneGeometry(0.4, 0.4), new T.MeshBasicMaterial({
-        map: this.canvasTex(128, 128, (c) => {
-          c.fillStyle = '#ff8a3d'; c.beginPath(); c.arc(64, 64, 60, 0, Math.PI * 2); c.fill();
-          c.fillStyle = '#fff'; c.font = `800 80px ${FONT3}`; c.textAlign = 'center'; c.textBaseline = 'middle';
-          c.fillText(String(reg.id), 64, 70);
-        }),
-        transparent: true
-      }));
-      num.position.set(-0.9, 1.6, -0.27);
-      grp.add(num);
-      grp.position.set(reg.counter[0].c + 1, 0, reg.counter[0].r + 0.5);
-      grp.traverse((o) => { if (o.isMesh) o.userData.tile = { r: reg.staff.r, c: reg.staff.c }; });
-      this.pickables.push(...grp.children);
-      this.world.add(grp);
+      base.makeTranslation(reg.counter[0].c + 1, 0, reg.counter[0].r + 0.5);
+      b.box('satin', '#c99a62', 1.9, 0.66, 0.7, 0, 0, 0, base);
+      b.box('paint', '#2a6e6a', 1.92, 0.12, 0.72, 0, 0, 0, base);
+      b.box('satin', '#3c4a55', 1.96, 0.06, 0.76, 0, 0.66, 0, base);
+      b.box('paint', '#1d2328', 1.1, 0.025, 0.42, -0.34, 0.72, 0.0, base);
+      for (let i = 0; i < 6; i++) b.box('metal', '#5b666e', 0.012, 0.028, 0.42, -0.85 + i * 0.2, 0.72, 0.0, base);
+      b.box('satin', '#ece8e0', 0.42, 0.2, 0.42, 0.66, 0.72, -0.04, base);
+      b.box('satin', '#2b3036', 0.36, 0.22, 0.04, 0.66, 0.92, -0.17, base, { rx: -0.25 });
+      b.box('satin', '#2b3036', 0.12, 0.04, 0.16, 0.36, 0.72, 0.2, base);
+      b.box('satin', '#46525b', 0.08, 0.1, 0.12, 0.36, 0.76, 0.2, base, { rx: -0.4 });
+      // présentoir à bonbons côté client
+      b.box('metal', '#8b98a1', 0.36, 0.5, 0.22, -0.68, 0, -0.48, base);
+      for (let i = 0; i < 6; i++) {
+        const col = ['#ff5fa2', '#ffd23f', '#3ccf8e', '#6c8cff', '#ff8a3d', '#d6336c'][i];
+        b.box('satin', col, 0.1, 0.1, 0.06, -0.79 + (i % 3) * 0.11, 0.12 + Math.floor(i / 3) * 0.2, -0.38, base);
+      }
+      // sacs en papier sous le comptoir côté caissier
+      b.box('paint', '#d9b07c', 0.22, 0.26, 0.14, 0.3, 0.0, 0.42, base);
+      b.box('paint', '#c99a62', 0.18, 0.22, 0.12, 0.55, 0.0, 0.44, base);
+      // poteau du numéro
+      b.box('metal', '#9aa6ad', 0.05, 1.0, 0.05, -0.9, 0.7, -0.3, base);
+      const num = this.plane(0.4, 0.4, this.canvasTex(128, 128, (c) => {
+        c.fillStyle = '#ff8a3d'; c.beginPath(); c.arc(64, 64, 60, 0, Math.PI * 2); c.fill();
+        c.strokeStyle = '#fff'; c.lineWidth = 6; c.stroke();
+        c.fillStyle = '#fff'; c.font = `800 80px ${FONT3}`; c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText(String(reg.id), 64, 70);
+      }), reg.counter[0].c + 1 - 0.9, 1.72, reg.counter[0].r + 0.5 - 0.27);
+      num.userData.ownTex = true;
+      this.world.add(num);
+      this.pickBox(2, 1.2, 1, reg.counter[0].c + 1, 0, reg.counter[0].r + 0.5, { r: reg.staff.r, c: reg.staff.c }, this.world);
     }
+    this.addBatch(b, this.world);
+    // Écrans des caisses
+    for (const reg of REGISTERS) {
+      if (!st.registers.includes(reg.id)) continue;
+      const scr = new T.Mesh(new T.BoxGeometry(0.3, 0.16, 0.01), this.mat('#6edcc8', { emissive: '#3fbfa8', rough: 0.4 }));
+      scr.position.set(reg.counter[0].c + 1 + 0.66, 1.03, reg.counter[0].r + 0.5 - 0.145);
+      scr.rotation.x = -0.25;
+      this.world.add(scr);
+    }
+
+    // Frontons colorés des rayons (une seule instance par étagère, couleur du produit)
+    const hg = new T.BoxGeometry(0.92, 0.22, 0.08);
+    const headers = new T.InstancedMesh(hg, new T.MeshStandardMaterial({ roughness: 0.45 }), Math.max(1, st.shelves.length));
+    const mtx = new T.Matrix4();
+    st.shelves.forEach((sh, i) => {
+      const sl = SHELF_SLOTS.find((x) => x.id === sh.slot);
+      mtx.makeTranslation(sl.c + 0.5, 1.6, sl.r + 0.5 - 0.27);
+      headers.setMatrixAt(i, mtx);
+      headers.setColorAt(i, new T.Color('#9aa7b0'));
+      this.shelfObjs.get(sh.slot).hi = i;
+    });
+    headers.castShadow = true;
+    headers.userData.ownTex = true;
+    this.headers = headers;
+    this.world.add(headers);
     this.stockKey = '';
   }
 
@@ -377,17 +749,15 @@ export class Renderer3D {
     if (m) return m;
     const T = this.T3;
     const p = PRODUCT_BY_ID[pid];
-    const [w, h, d] = ITEM_DIMS[p.shape] || [0.18, 0.24, 0.12];
-    const face = this.canvasTex(128, 128, (c) => {
-      c.fillStyle = lighten(p.color, 0.55);
-      c.fillRect(0, 0, 128, 128);
-      c.drawImage(this.iconCanvas(p, 128), 0, 0);
-    });
-    const side = new T.MeshStandardMaterial({ color: p.color, roughness: 0.55 });
-    const front = new T.MeshStandardMaterial({ map: face, roughness: 0.5 });
-    const geo = new T.BoxGeometry(w, h, d);
-    geo.translate(0, h / 2, 0);
-    m = new T.InstancedMesh(geo, [side, side, side, side, front, side], SHELF_SLOTS.length * SHELF_CAPACITY);
+    const b = new Batch(T);
+    productParts(b, p, T);
+    const geo = b.merge().get('i');
+    // Articles bien visibles : on les agrandit pour remplir la tablette (sans dépasser la hauteur).
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox;
+    const k = Math.min(0.235 / (bb.max.x - bb.min.x), 0.31 / (bb.max.y - bb.min.y), 0.2 / (bb.max.z - bb.min.z), 1.7);
+    geo.scale(k, k, k);
+    m = new T.InstancedMesh(geo, this.vm.item, SHELF_SLOTS.length * SHELF_CAPACITY);
     m.count = 0;
     m.castShadow = false;
     m.receiveShadow = true;
@@ -406,23 +776,33 @@ export class Renderer3D {
     const counts = new Map();
     for (const m of this.itemMeshes.values()) m.count = 0;
     const mtx = new T.Matrix4();
-    const levels = [0.16, 0.54, 0.92];
+    const q = new T.Quaternion();
+    const e = new T.Euler();
+    const pos = new T.Vector3();
+    const one = new T.Vector3(1, 1, 1);
+    const levels = [0.15, 0.53, 0.91];
+    const col = new T.Color();
     for (const sh of st.shelves) {
       const obj = this.shelfObjs?.get(sh.slot);
       if (!obj) continue;
       const p = sh.product ? PRODUCT_BY_ID[sh.product] : null;
-      obj.header.color.set(p ? p.color : '#9aa7b0');
+      if (this.headers && obj.hi != null) {
+        this.headers.setColorAt(obj.hi, col.set(p ? p.color : '#9aa7b0'));
+        this.headers.instanceColor.needsUpdate = true;
+      }
       if (!p || !sh.qty) continue;
       const m = this.itemMesh(p.id);
       let n = counts.get(p.id) || 0;
       for (let i = 0; i < sh.qty; i++) {
-        const lvl = 2 - Math.floor(i / 6) < 0 ? 0 : Math.floor(i / 6);
+        const lvl = 2 - Math.min(2, Math.floor(i / 6)); // on remplit par le haut : le plus visible
         const k = i % 6;
-        const col = k % 3;
+        const cx = k % 3;
         const row = Math.floor(k / 3);
-        const x = obj.slot.c + 0.5 + (col - 1) * 0.27;
-        const z = obj.slot.r + 0.5 + (row === 0 ? 0.14 : -0.1);
-        mtx.makeTranslation(x, levels[lvl] + 0.02, z);
+        const seed = hash(i + sh.slot.charCodeAt(0) * 7 + Number(sh.slot.slice(1)) * 31);
+        pos.set(obj.slot.c + 0.5 + (cx - 1) * 0.265 + (seed - 0.5) * 0.02, levels[lvl] + 0.015, obj.slot.r + 0.5 + (row === 0 ? 0.13 : -0.12));
+        e.set(0, (seed - 0.5) * 0.25, 0);
+        q.setFromEuler(e);
+        mtx.compose(pos, q, one);
         m.setMatrixAt(n++, mtx);
       }
       counts.set(p.id, n);
@@ -439,10 +819,12 @@ export class Renderer3D {
       const p = PRODUCT_BY_ID[pid];
       const tex = this.canvasTex(128, 128, (c) => {
         c.fillStyle = '#c99a62'; c.fillRect(0, 0, 128, 128);
-        c.fillStyle = 'rgba(120,80,40,0.35)'; c.fillRect(56, 0, 16, 128);
-        c.fillStyle = '#ffffff'; rr2(c, 24, 30, 80, 68, 10); c.fill();
-        c.drawImage(this.iconCanvas(p, 96), 32, 26, 64, 64);
-        c.fillStyle = p.color; c.fillRect(24, 88, 80, 10);
+        c.fillStyle = 'rgba(120,80,40,0.25)';
+        for (let i = 0; i < 6; i++) c.fillRect(0, 10 + i * 20, 128, 2);
+        c.fillStyle = '#e8d3a8'; c.fillRect(56, 0, 16, 128);
+        c.fillStyle = '#ffffff'; rr2(c, 20, 26, 88, 76, 12); c.fill();
+        c.drawImage(this.iconCanvas(p, 96), 30, 24, 68, 68);
+        c.fillStyle = p.color; c.fillRect(20, 90, 88, 12);
       });
       m = new this.T3.MeshStandardMaterial({ map: tex, roughness: 0.85 });
       this.mats.set(k, m);
@@ -467,91 +849,135 @@ export class Renderer3D {
     if (key === this.deliveryKey) return;
     this.deliveryKey = key;
     for (const m of this.cartonMeshes) this.scene.remove(m);
-    this.pickables = this.pickables.filter((m) => !m.userData.carton);
     this.cartonMeshes = [];
     st.delivery.forEach((stack, i) => {
       const d = DELIVERY_SPOTS[i];
       stack.forEach((c, k) => {
         const m = this.cartonMesh(c.product);
-        m.position.set(d.c + 0.5 + (k % 2 ? 0.03 : -0.02), 0.18 + k * 0.37, d.r + 0.5);
-        m.rotation.y = (k % 2 ? 0.06 : -0.04);
-        m.userData = { tile: { r: d.r, c: d.c }, carton: true };
+        m.position.set(d.c + 0.5 + (hash(i * 5 + k) - 0.5) * 0.06, 0.27 + k * 0.37, d.r + 0.5);
+        m.rotation.y = (hash(i * 3 + k * 7) - 0.5) * 0.14;
         this.scene.add(m);
         this.cartonMeshes.push(m);
-        this.pickables.push(m);
       });
     });
   }
 
   // ---------------------------------------------------------------- personnages
-  person(kind, look = {}) {
+  // Style « chibi » : grosse tête, corps rond, bras et jambes articulés. 5 appels de rendu par personne.
+  person(kind, look = {}, id = 0) {
     const T = this.T3;
-    const g = new T.Group();
+    const G = (k) => Batch.geo(T, k);
     let shirt = look.shirt || '#3a7bd5', skin = look.skin || '#f1c7a5', hair = look.hair || '#5a3a22';
-    if (kind === 'player') { shirt = '#2d7a73'; skin = '#f0c29e'; hair = '#3b2a1e'; }
-    if (kind === 'stocker') { shirt = '#f08a24'; }
-    if (kind === 'cashier') { shirt = '#d6336c'; }
-    const legMat = this.mat('#34404a');
-    const legGeo = this.legGeo || (this.legGeo = new T.CapsuleGeometry(0.055, 0.2, 3, 8));
-    const legL = new T.Mesh(legGeo, legMat);
-    const legR = new T.Mesh(legGeo, legMat);
-    legL.position.set(-0.07, 0.15, 0);
-    legR.position.set(0.07, 0.15, 0);
-    const body = new T.Mesh(this.bodyGeo || (this.bodyGeo = new T.CapsuleGeometry(0.16, 0.2, 4, 12)), this.mat(shirt, { rough: 0.8 }));
-    body.position.y = 0.48;
-    body.scale.set(1, 1, 0.8);
-    const head = new T.Mesh(this.headGeo || (this.headGeo = new T.SphereGeometry(0.15, 18, 14)), this.mat(skin, { rough: 0.7 }));
-    head.position.y = 0.86;
-    const hairM = new T.Mesh(this.hairGeo || (this.hairGeo = new T.SphereGeometry(0.158, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.55)), this.mat(hair, { rough: 0.9 }));
-    hairM.position.y = 0.87;
-    hairM.rotation.x = -0.35;
-    const eyeGeo = this.eyeGeo || (this.eyeGeo = new T.SphereGeometry(0.022, 8, 6));
-    const eyeMat = this.mat('#22262b', { rough: 0.3 });
-    const eyeL = new T.Mesh(eyeGeo, eyeMat);
-    const eyeR = new T.Mesh(eyeGeo, eyeMat);
-    eyeL.position.set(-0.055, 0.88, 0.135);
-    eyeR.position.set(0.055, 0.88, 0.135);
-    const armGeo = this.armGeo || (this.armGeo = new T.SphereGeometry(0.06, 10, 8));
-    const armL = new T.Mesh(armGeo, this.mat(skin));
-    const armR = new T.Mesh(armGeo, this.mat(skin));
-    armL.position.set(-0.2, 0.42, 0.04);
-    armR.position.set(0.2, 0.42, 0.04);
-    g.add(legL, legR, body, head, hairM, eyeL, eyeR, armL, armR);
-    if (look.hairStyle === 2) {
-      const bun = new T.Mesh(this.bunGeo || (this.bunGeo = new T.SphereGeometry(0.07, 10, 8)), this.mat(hair, { rough: 0.9 }));
-      bun.position.set(0, 1.02, -0.06);
-      g.add(bun);
+    const pantsList = ['#34404a', '#3b4f6b', '#5a4a3a', '#2f3640', '#6b5b4b'];
+    let pants = pantsList[id % pantsList.length];
+    let style = look.hairStyle ?? 0;
+    if (kind === 'player') { shirt = '#2d7a73'; skin = '#f0c29e'; hair = '#3b2a1e'; pants = '#2f3a44'; style = 0; }
+    if (kind === 'stocker') { shirt = '#f08a24'; pants = '#2f3a44'; }
+    if (kind === 'cashier') { shirt = '#d6336c'; pants = '#2f3a44'; }
+    const shoe = '#2a2d31';
+
+    // Tronc + tête + visage + accessoires : une seule géométrie
+    const b = new Batch(T);
+    b.add('s', G('sph'), shirt, { y: 0.44, sx: 0.32, sy: 0.42, sz: 0.25 });
+    b.add('s', G('cyl'), pants, { y: 0.29, sx: 0.29, sy: 0.08, sz: 0.22 });
+    b.add('s', G('cyl8'), skin, { y: 0.66, sx: 0.08, sy: 0.06, sz: 0.08 });
+    b.add('s', G('sph'), skin, { y: 0.86, sx: 0.36, sy: 0.34, sz: 0.34 });
+    // cheveux
+    b.add('s', G('cap'), hair, { y: 0.875, sx: 0.38, sy: 0.36, sz: 0.37, rx: -0.38 });
+    if (style === 1) b.box('s', hair, 0.34, 0.26, 0.12, 0, 0.66, -0.1);
+    if (style === 2) b.add('s', G('sph'), hair, { y: 1.04, z: -0.09, sx: 0.13, sy: 0.13, sz: 0.13 });
+    // visage (vers +z)
+    for (const x of [-0.065, 0.065]) {
+      b.add('s', G('sphLow'), '#22262b', { x, y: 0.875, z: 0.158, sx: 0.045, sy: 0.055, sz: 0.03 });
+      b.add('s', G('sphLow'), '#ffffff', { x: x + 0.01, y: 0.89, z: 0.17, sx: 0.014, sy: 0.014, sz: 0.01 });
+      b.add('s', G('sphLow'), '#f08f8f', { x: x * 1.65, y: 0.83, z: 0.135, sx: 0.06, sy: 0.035, sz: 0.02 });
+    }
+    b.box('s', '#9b3b3b', 0.05, 0.012, 0.01, 0, 0.805, 0.162);
+    if (kind === 'customer' && id % 4 === 1) {
+      for (const x of [-0.065, 0.065]) b.add('s', G('torus'), '#2b3036', { x, y: 0.875, z: 0.165, rz: Math.PI, sx: 0.1, sy: 0.1, sz: 0.1 });
+      for (const x of [-0.065, 0.065]) b.add('s', G('torus'), '#2b3036', { x, y: 0.875, z: 0.165, sx: 0.1, sy: 0.1, sz: 0.1 });
     }
     if (kind === 'player' || kind === 'cashier') {
-      const apron = this.box(0.24, 0.26, 0.02, this.mat('#ffffff', { rough: 0.9 }), 0, 0.44, 0.13, { shadow: false });
-      g.add(apron);
+      b.box('s', '#ffffff', 0.22, 0.26, 0.02, 0, 0.26, 0.125);
+      b.box('s', '#ffffff', 0.025, 0.14, 0.02, -0.08, 0.5, 0.11);
+      b.box('s', '#ffffff', 0.025, 0.14, 0.02, 0.08, 0.5, 0.11);
+      b.box('s', kind === 'player' ? '#ff8a3d' : '#ffd23f', 0.07, 0.04, 0.01, 0.06, 0.5, 0.122);
     }
     if (kind === 'stocker') {
-      g.add(this.box(0.34, 0.04, 0.27, this.mat('#f2e84b', { rough: 0.5 }), 0, 0.55, 0, { shadow: false }));
+      b.add('s', G('cyl'), '#f2e84b', { y: 0.47, sx: 0.325, sy: 0.04, sz: 0.255 });
+      b.add('s', G('cyl'), '#f2e84b', { y: 0.37, sx: 0.33, sy: 0.04, sz: 0.26 });
+      b.add('s', G('cap'), '#ffd23f', { y: 0.92, sx: 0.39, sy: 0.3, sz: 0.39 });
+      b.box('s', '#ffd23f', 0.42, 0.02, 0.44, 0, 0.92, 0.02);
     }
     if (kind === 'player') {
-      const cap = new T.Mesh(new T.SphereGeometry(0.162, 16, 8, 0, Math.PI * 2, 0, Math.PI * 0.45), this.mat('#ff8a3d', { rough: 0.6 }));
-      cap.position.y = 0.88;
-      const brim = this.box(0.2, 0.025, 0.14, this.mat('#ff8a3d', { rough: 0.6 }), 0, 0.93, 0.15, { shadow: false });
-      g.add(cap, brim);
+      b.add('s', G('cap'), '#ff8a3d', { y: 0.9, sx: 0.385, sy: 0.3, sz: 0.38 });
+      b.box('s', '#ff8a3d', 0.24, 0.025, 0.16, 0, 0.93, 0.19, null, { rx: 0.15 });
     }
-    g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; } });
-    g.scale.setScalar(1.15);
-    g.userData = { legL, legR, body, head, armL, armR, carry: null, carryPid: null, basket: null, rot: 0 };
+    const torsoGeo = b.merge().get('s');
+    const g = new T.Group();
+    const torso = new T.Mesh(torsoGeo, this.vm.skin);
+    torso.castShadow = true;
+    g.add(torso);
+    // Jambes (pivot à la hanche)
+    const lb = new Batch(T);
+    lb.add('s', G('cyl8'), pants, { y: -0.11, sx: 0.1, sy: 0.22, sz: 0.1 });
+    lb.box('s', shoe, 0.1, 0.06, 0.15, 0, -0.27, 0.025);
+    const legGeo = lb.merge().get('s');
+    const legL = new T.Mesh(legGeo, this.vm.skin);
+    const legR = new T.Mesh(legGeo, this.vm.skin);
+    legL.position.set(-0.07, 0.27, 0);
+    legR.position.set(0.07, 0.27, 0);
+    // Bras (pivot à l'épaule)
+    const ab = new Batch(T);
+    ab.add('s', G('cyl8'), shirt, { y: -0.06, sx: 0.085, sy: 0.13, sz: 0.085 });
+    ab.add('s', G('cyl8'), skin, { y: -0.17, sx: 0.07, sy: 0.1, sz: 0.07 });
+    ab.add('s', G('sphLow'), skin, { y: -0.23, sx: 0.085, sy: 0.085, sz: 0.085 });
+    const armGeo = ab.merge().get('s');
+    const armL = new T.Group();
+    const armR = new T.Group();
+    armL.add(new T.Mesh(armGeo, this.vm.skin));
+    armR.add(new T.Mesh(armGeo, this.vm.skin));
+    armL.position.set(-0.19, 0.6, 0);
+    armR.position.set(0.19, 0.6, 0);
+    armL.rotation.z = -0.12;
+    armR.rotation.z = 0.12;
+    g.add(legL, legR, armL, armR);
+    g.scale.setScalar(1.05);
+    g.userData = { legL, legR, torso, armL, armR, carry: null, carryPid: null, basket: null, bag: null, rot: 0, hop: 0, geos: [torsoGeo, legGeo, armGeo] };
     return g;
+  }
+
+  basketMesh() {
+    const T = this.T3;
+    if (!this.basketGeo) {
+      const b = new Batch(T);
+      b.box('s', '#e8483d', 0.2, 0.02, 0.14, 0, 0, 0);
+      b.box('s', '#e8483d', 0.2, 0.1, 0.015, 0, 0, 0.065);
+      b.box('s', '#e8483d', 0.2, 0.1, 0.015, 0, 0, -0.065);
+      b.box('s', '#d73c31', 0.015, 0.1, 0.14, 0.1, 0, 0);
+      b.box('s', '#d73c31', 0.015, 0.1, 0.14, -0.1, 0, 0);
+      b.add('s', Batch.geo(T, 'torus'), '#2b3036', { y: 0.1, sx: 0.18, sy: 0.18, sz: 0.18 });
+      for (const [x, col] of [[-0.05, '#ffd23f'], [0.04, '#4aa8e8'], [0.0, '#3ccf8e']]) b.box('s', col, 0.06, 0.08, 0.06, x, 0.02, (x * 7) % 0.04);
+      this.basketGeo = b.merge().get('s');
+      const bb = new Batch(T);
+      bb.box('s', '#d9b07c', 0.2, 0.24, 0.11, 0, 0, 0);
+      bb.box('s', '#c99a62', 0.2, 0.03, 0.112, 0, 0.21, 0);
+      bb.box('s', '#3ccf8e', 0.06, 0.06, 0.03, -0.03, 0.22, 0.01);
+      this.bagGeo = bb.merge().get('s');
+    }
+    return this.basketGeo;
   }
 
   syncAgent(key, a, kind) {
     let o = this.agentObjs.get(key);
     if (!o) {
-      o = this.person(kind, a.look || {});
+      o = this.person(kind, a.look || {}, a.id || 0);
       this.scene.add(o);
       this.agentObjs.set(key, o);
     }
     o.userData.seen = true;
     const u = o.userData;
     const off = a.off || 0;
-    o.position.set(a.x + 0.5 + off, 0, a.y + 0.55);
     // Orientation douce
     const dir = a.dir || 1;
     const want = dir === 1 ? 0 : dir === -1 ? Math.PI : dir === 2 ? Math.PI / 2 : -Math.PI / 2;
@@ -562,12 +988,18 @@ export class Renderer3D {
     o.rotation.y = u.rot;
     const moving = a.path && a.path.length;
     const ph = (a.walk || 0) * 7;
-    const swing = moving ? Math.sin(ph) * 0.6 : 0;
+    const swing = moving ? Math.sin(ph) * 0.65 : 0;
+    // Petit saut de joie / secousse de colère selon la bulle
+    const bubble = a.bubble && a.bubble.text;
+    const happy = bubble === '😊' ? Math.abs(Math.sin(this.time * 9)) * 0.06 : 0;
+    const shake = bubble === '😠' ? Math.sin(this.time * 40) * 0.03 : 0;
+    const bob = moving ? Math.abs(Math.sin(ph)) * 0.04 : Math.sin(this.time * 2.2 + (a.id || 0)) * 0.008;
+    o.position.set(a.x + 0.5 + off + shake, happy, a.y + 0.55);
     u.legL.rotation.x = swing;
     u.legR.rotation.x = -swing;
-    const bob = moving ? Math.abs(Math.sin(ph)) * 0.035 : Math.sin(this.time * 2 + (a.id || 0)) * 0.006;
-    u.body.position.y = 0.48 + bob;
-    u.head.position.y = 0.86 + bob;
+    u.torso.position.y = bob;
+    u.torso.rotation.x = moving ? 0.06 : 0;
+    u.torso.scale.y = moving ? 1 : 1 + Math.sin(this.time * 2.2 + (a.id || 0)) * 0.012;
     // Carton porté
     const pid = a.carry ? a.carry.product : null;
     if (pid !== u.carryPid) {
@@ -576,21 +1008,37 @@ export class Renderer3D {
       u.carryPid = pid;
       if (pid) {
         u.carry = this.cartonMesh(pid);
-        u.carry.scale.setScalar(0.62);
-        u.carry.position.set(0, 0.5, 0.24);
+        u.carry.scale.setScalar(0.6);
+        u.carry.position.set(0, 0.5, 0.27);
         o.add(u.carry);
       }
     }
-    u.armL.position.set(pid ? -0.17 : -0.2, pid ? 0.5 : 0.42 - swing * 0.03, pid ? 0.2 : 0.04);
-    u.armR.position.set(pid ? 0.17 : 0.2, pid ? 0.5 : 0.42 + swing * 0.03, pid ? 0.2 : 0.04);
-    // Panier client
+    // Bras : marche, port de carton, se servir en rayon, remplir, scanner
+    let aL = -swing * 0.8, aR = swing * 0.8;
+    if (pid) { aL = -1.25; aR = -1.25; }
+    else if (a.fill) { aL = -1.1 + Math.sin(this.time * 14) * 0.35; aR = -1.1 - Math.sin(this.time * 14) * 0.35; }
+    else if (a.state === 'browse' && !moving) { aR = -1.7 + Math.sin(this.time * 6) * 0.15; }
+    else if (a.scanning) { aR = -0.9 + Math.sin(this.time * 12) * 0.4; aL = -0.6; }
+    u.armL.rotation.x += (aL - u.armL.rotation.x) * Math.min(1, this.dt * 14);
+    u.armR.rotation.x += (aR - u.armR.rotation.x) * Math.min(1, this.dt * 14);
+    u.armL.position.y = 0.6 + bob;
+    u.armR.position.y = 0.6 + bob;
+    // Panier (en courses) ou sac (après avoir payé)
     const hasBasket = a.basket && a.basket.length > 0;
+    const hasBag = !hasBasket && a.paid;
     if (hasBasket && !u.basket) {
-      u.basket = this.box(0.16, 0.1, 0.12, this.mat('#e85d3a', { rough: 0.6 }), 0.24, 0.36, 0.06);
-      o.add(u.basket);
+      u.basket = new this.T3.Mesh(this.basketMesh(), this.vm.skin);
+      u.basket.position.set(0, -0.36, 0.02);
+      u.armL.add(u.basket);
     } else if (!hasBasket && u.basket) {
-      o.remove(u.basket);
+      u.armL.remove(u.basket);
       u.basket = null;
+    }
+    if (hasBag && !u.bag) {
+      this.basketMesh();
+      u.bag = new this.T3.Mesh(this.bagGeo, this.vm.skin);
+      u.bag.position.set(0, -0.48, 0.02);
+      u.armR.add(u.bag);
     }
     return o;
   }
@@ -600,7 +1048,7 @@ export class Renderer3D {
     const box = this.canvas.parentElement.getBoundingClientRect();
     this.w = box.width;
     this.h = box.height;
-    this.dpr = Math.min(2, window.devicePixelRatio || 1);
+    this.dpr = Math.min(this.lowQuality ? 1.25 : 2, window.devicePixelRatio || 1);
     this.renderer.setPixelRatio(this.dpr);
     this.renderer.setSize(this.w, this.h, false);
     this.canvas.style.width = `${this.w}px`;
@@ -629,7 +1077,6 @@ export class Renderer3D {
       }
       return { ok: maxY <= 0.985 && minY >= -0.985, minY, maxY };
     };
-    // Recentrage vertical puis recherche par dichotomie de la distance.
     let ty = ROWS / 2;
     let lo = 8, hi = 80;
     for (let it = 0; it < 6; it++) {
@@ -639,7 +1086,6 @@ export class Renderer3D {
         if (fits(mid, ty).ok) hi = mid; else lo = mid;
       }
       const f = fits(hi, ty);
-      // Décale la cible pour équilibrer les marges haut / bas.
       const off = (f.maxY + f.minY) / 2;
       ty -= off * 4;
     }
@@ -713,8 +1159,51 @@ export class Renderer3D {
       this.renderer.setPixelRatio(this.dpr);
       this.renderer.setSize(this.w, this.h, false);
       this.renderer.shadowMap.type = this.T3.PCFShadowMap;
-      this.scene.traverse((o) => { if (o.isDirectionalLight) { o.shadow.mapSize.set(1024, 1024); o.shadow.map?.dispose(); o.shadow.map = null; } });
+      this.sun.shadow.mapSize.set(1024, 1024);
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
     }
+  }
+
+  updateHalos() {
+    const g = this.game;
+    const st = g.state;
+    const T = this.T3;
+    const mtx = this.tmpM || (this.tmpM = new T.Matrix4());
+    const col = this.tmpC || (this.tmpC = new T.Color());
+    let n = 0;
+    const put = (r, c, color, size) => {
+      if (n >= 32) return;
+      mtx.makeScale(size, 1, size);
+      mtx.setPosition(c + 0.5, 0.012, r + 0.5);
+      this.halos.setMatrixAt(n, mtx);
+      this.halos.setColorAt(n, col.set(color));
+      n++;
+    };
+    const mv = g.moving;
+    if (mv) {
+      for (const sh of st.shelves) {
+        const sl = this.shelfObjs?.get(sh.slot)?.slot;
+        if (!sl) continue;
+        if (sh.slot === mv.from) put(sl.r, sl.c, '#ff7a1a', 1.7);
+        else if (!mv.from) put(sl.r, sl.c, '#ffb27a', 1.35);
+      }
+      if (mv.from) for (const sl of g.freeSlots()) put(sl.r, sl.c, '#2bd1a0', 1.45);
+      this.haloMat.opacity = 0.6 + 0.35 * Math.sin(this.time * 6);
+    } else {
+      const carry = g.player.carry;
+      if (carry) {
+        for (const sh of st.shelves) {
+          const ok = (sh.product === carry.product || !sh.product || sh.qty === 0) && sh.qty < SHELF_CAPACITY;
+          const sl = this.shelfObjs?.get(sh.slot)?.slot;
+          if (ok && sl) put(sl.r, sl.c, '#ff8a3d', 1.5);
+        }
+      }
+      this.haloMat.opacity = 0.55 + 0.3 * Math.sin(this.time * 6);
+    }
+    this.halos.count = n;
+    this.halos.instanceMatrix.needsUpdate = true;
+    if (this.halos.instanceColor) this.halos.instanceColor.needsUpdate = true;
   }
 
   draw(dt) {
@@ -726,6 +1215,7 @@ export class Renderer3D {
     this.buildLayout();
     this.updateStock();
     this.updateDelivery();
+    this.updateHalos();
 
     // Décalage quand le panneau de caisse couvre le bas de l'écran
     this.placeCamera(this.shift);
@@ -737,27 +1227,22 @@ export class Renderer3D {
     // Écran de l'ordinateur : pulse pendant une livraison
     this.screenMat.emissiveIntensity = st.pending.length ? 0.6 + 0.5 * Math.sin(this.time * 6) : 0.8;
 
-    // Étagères compatibles avec le carton porté : lueur orange
-    const carry = g.player.carry;
-    for (const sh of st.shelves) {
-      const o = this.shelfObjs?.get(sh.slot);
-      if (!o) continue;
-      const ok = carry && (sh.product === carry.product || !sh.product || sh.qty === 0) && sh.qty < SHELF_CAPACITY;
-      o.back.emissiveIntensity = ok ? 0.35 + 0.25 * Math.sin(this.time * 6) : 0;
-    }
-
     // Personnages
     for (const o of this.agentObjs.values()) o.userData.seen = false;
     this.syncAgent('player', g.player, 'player');
     if (g.stocker) this.syncAgent(`stocker-${g.stocker.id}`, g.stocker, 'stocker');
     for (const cu of g.customers) this.syncAgent(`c${cu.id}`, cu, 'customer');
-    for (const [regId] of g.cashierAssignments()) {
+    for (const [regId, member] of g.cashierAssignments()) {
       const reg = REGISTERS.find((x) => x.id === regId);
-      this.syncAgent(`cashier-${regId}`, { x: reg.staff.c, y: reg.staff.r - 0.1, dir: -1, id: regId, path: [] }, 'cashier');
+      const q = g.queues.get(regId) || [];
+      const first = q.length && g.customers.find((x) => x.id === q[0]);
+      const scanning = !!(first && first.processing);
+      this.syncAgent(`cashier-${regId}`, { x: reg.staff.c, y: reg.staff.r - 0.1, dir: -1, id: regId + (member.look || 0) * 3, path: [], scanning, look: { hairStyle: (member.look || 0) % 3, hair: ['#a8642e', '#2b1d14', '#e6c068', '#5a3a22', '#1f1f1f', '#c0462b'][(member.look || 0) % 6], skin: ['#f6d3b3', '#c98d63', '#e8b48f', '#9c6644', '#f1c7a5', '#6f4a33'][(member.look || 0) % 6] } }, 'cashier');
     }
     for (const [k, o] of this.agentObjs) {
       if (!o.userData.seen) {
         this.scene.remove(o);
+        for (const geo of o.userData.geos || []) geo.dispose();
         this.agentObjs.delete(k);
       }
     }
@@ -776,24 +1261,47 @@ export class Renderer3D {
     const unit = this.toScreen(1, 0, 0).x - this.toScreen(0, 0, 0).x; // pixels par case
     const fs = (k) => Math.max(9, Math.round(unit * k));
 
-    // Étiquettes de prix
+    // Étiquettes de prix (jaune « PROMO » quand le prix est bas)
     for (const sh of st.shelves) {
       const sl = SHELF_SLOTS.find((x) => x.id === sh.slot);
       if (!sl || !sh.product) continue;
       const p = PRODUCT_BY_ID[sh.product];
-      const pt = this.toScreen(sl.c + 0.5, 0.06, sl.r + 0.86);
+      const pt = this.toScreen(sl.c + 0.5, 0.06, sl.r + 0.9);
       const empty = sh.qty === 0;
       const ratio = st.prices[p.id] / Math.round(p.market * 100);
+      const promo = !empty && ratio < 0.9;
       const label = empty ? 'VIDE' : money(st.prices[p.id]);
       ctx.font = `800 ${fs(0.22)}px ${FONT3}`;
-      const tw = ctx.measureText(label).width + 8;
-      ctx.fillStyle = empty ? `rgba(232,72,61,${0.75 + 0.25 * Math.sin(this.time * 5)})` : ratio > 1.15 ? '#ffd9a8' : '#ffffff';
-      rr2(ctx, pt.x - tw / 2, pt.y - fs(0.15), tw, fs(0.3), 4);
+      const tw = ctx.measureText(label).width + 10;
+      const th = fs(0.3);
+      ctx.fillStyle = 'rgba(40,30,20,0.25)';
+      rr2(ctx, pt.x - tw / 2 + 1, pt.y - th / 2 + 2, tw, th, 5); ctx.fill();
+      ctx.fillStyle = empty ? `rgba(232,72,61,${0.8 + 0.2 * Math.sin(this.time * 5)})` : promo ? '#ffe14d' : ratio > 1.15 ? '#ffd9a8' : '#ffffff';
+      rr2(ctx, pt.x - tw / 2, pt.y - th / 2, tw, th, 5);
       ctx.fill();
       ctx.fillStyle = empty ? '#ffffff' : '#22333b';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(label, pt.x, pt.y + 1);
+    }
+
+    // Mode « Déplacer » : flèche sur l'étagère choisie, « + » qui pulsent
+    if (g.moving) {
+      const from = g.moving.from && SHELF_SLOTS.find((x) => x.id === g.moving.from);
+      if (from) {
+        const pt = this.toScreen(from.c + 0.5, 1.95, from.r + 0.3);
+        const by = pt.y - 6 + Math.sin(this.time * 6) * 4;
+        ctx.fillStyle = '#ff7a1a';
+        ctx.beginPath(); ctx.arc(pt.x, by, unit * 0.32, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = `800 ${fs(0.36)}px ${FONT3}`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('↔', pt.x, by + 1);
+        for (const sl of g.freeSlots()) {
+          const p2 = this.toScreen(sl.c + 0.5, 0.05, sl.r + 0.5);
+          this.pulse(ctx, p2.x, p2.y, unit * 0.42, '43,209,160');
+        }
+      }
     }
 
     // Tutoriel : anneaux qui pulsent
@@ -830,7 +1338,7 @@ export class Renderer3D {
     // Remplissage du rayon par le joueur
     const p = g.player;
     if (p.fill) {
-      const pt = this.toScreen(p.x + 0.5, 1.25, p.y + 0.55);
+      const pt = this.toScreen(p.x + 0.5, 1.35, p.y + 0.55);
       const k = p.fill.shelf.qty / SHELF_CAPACITY;
       ctx.fillStyle = 'rgba(0,0,0,0.3)';
       rr2(ctx, pt.x - unit * 0.35, pt.y, unit * 0.7, 6, 3); ctx.fill();
@@ -840,7 +1348,7 @@ export class Renderer3D {
 
     // Bulles et patience des clients
     for (const cu of g.customers) {
-      const pt = this.toScreen(cu.x + 0.5 + (cu.off || 0), 1.15, cu.y + 0.55);
+      const pt = this.toScreen(cu.x + 0.5 + (cu.off || 0), 1.25, cu.y + 0.55);
       if (cu.state === 'queue' && !cu.processing && cu.waited > cu.patience * 0.35) {
         const f = Math.max(0, 1 - cu.waited / cu.patience);
         ctx.fillStyle = 'rgba(0,0,0,0.3)';
@@ -892,9 +1400,9 @@ export class Renderer3D {
     this.ripples = this.ripples.filter((r) => r.t < 0.45);
   }
 
-  pulse(ctx, x, y, rad) {
+  pulse(ctx, x, y, rad, rgb = '255,138,61') {
     const k = (this.time * 1.2) % 1;
-    ctx.strokeStyle = `rgba(255,138,61,${0.9 * (1 - k)})`;
+    ctx.strokeStyle = `rgba(${rgb},${0.9 * (1 - k)})`;
     ctx.lineWidth = 3;
     ctx.beginPath(); ctx.arc(x, y, rad * (0.8 + k * 0.5), 0, Math.PI * 2); ctx.stroke();
   }

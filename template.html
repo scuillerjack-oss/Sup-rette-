@@ -232,6 +232,28 @@ button:disabled { opacity: 0.45; cursor: default; }
 .chips span { background: var(--soft); border-radius: 999px; padding: 4px 10px; font-weight: 800; font-size: 0.8rem; }
 .chips .warn { background: #ffe3cf; color: #a3400f; }
 .note { color: #a3400f; font-weight: 700; font-size: 0.85rem; }
+/* V1.2 : objectifs, événement, déplacer une étagère */
+#btnGoals { position: absolute; left: 8px; top: 8px; z-index: 2; display: flex; gap: 6px; align-items: center; background: rgba(255,255,255,0.92); color: var(--teal); border-radius: 999px; padding: 6px 10px; font-family: var(--display); font-weight: 800; font-size: 0.85rem; box-shadow: 0 3px 10px rgba(0,0,0,0.15); min-height: 36px; max-width: calc(100% - 16px); }
+#btnGoals .ev { color: #a3400f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#btnGoals span + span { border-left: 1px solid #d5e0dc; padding-left: 6px; }
+#toasts { top: 52px; }
+#moveBar { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 3; display: flex; align-items: center; gap: 10px; background: var(--orange); color: #fff; border-radius: 18px; padding: 10px 10px 10px 14px; font-weight: 800; font-size: 0.95rem; line-height: 1.25; box-shadow: 0 6px 18px rgba(0,0,0,0.25); }
+#moveBar span { flex: 1; }
+#moveBar button { background: #fff; color: #a3400f; border-radius: 12px; padding: 10px 14px; font-weight: 800; min-height: 44px; }
+#app.moving #hint, #app.moving #openBtn, #app.moving #regPill { display: none !important; }
+.movebtn { width: 100%; display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 12px; align-items: center; text-align: left; margin: 12px 0 4px; padding: 12px 14px; border-radius: 16px; background: #fff2e8; color: #a3400f; border: 2px solid #ffc9a3; min-height: 64px; }
+.movebtn span { grid-row: span 2; font-size: 1.6rem; }
+.movebtn b { font-family: var(--display); font-size: 1.05rem; }
+.movebtn small { font-weight: 700; font-size: 0.78rem; opacity: 0.85; }
+.event { display: flex; gap: 12px; align-items: center; background: #fff2e8; border-radius: 16px; padding: 10px 12px; }
+.event > span { font-size: 1.8rem; }
+.event b { display: block; font-family: var(--display); color: #a3400f; }
+.event small { color: #7a4a2a; font-weight: 700; }
+.goal.done { background: #e2f6ec; }
+.gauge.mini { height: 6px; margin: 5px 0 0; background: #fff; }
+.sumgoals { display: flex; flex-direction: column; gap: 3px; text-align: left; background: #fff8e8; border-radius: 14px; padding: 8px 12px; margin-bottom: 10px; font-size: 0.85rem; font-weight: 700; }
+.sumgoals b { font-family: var(--display); color: #8a5a00; font-size: 0.95rem; }
+.sumgoals .ok { color: #1b7a4f; } .sumgoals .ko { color: #8a8f8d; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>
 
@@ -250,6 +272,8 @@ button:disabled { opacity: 0.45; cursor: default; }
     <div id="hint" hidden></div>
     <div id="toasts" aria-live="polite"></div>
     <div id="regPill" hidden>🧾 À la caisse · en attente d’un client</div>
+    <button id="btnGoals" hidden aria-label="Objectifs du jour et événement"></button>
+    <div id="moveBar" hidden><span id="moveText">Touche l’étagère à déplacer</span><button id="moveCancel">Annuler</button></div>
   </main>
   <nav class="bar">
     <button id="btnOrder"><i>🖥️</i>Commander</button>

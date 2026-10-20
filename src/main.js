@@ -4,7 +4,7 @@ import { Game, newState, serialize, deserialize } from './game.js';
 import { Renderer } from './render.js';
 import { Renderer3D, webglAvailable } from './render3d.js';
 import { UI } from './ui.js';
-import { resolveTap, isTap } from './tap.js';
+import { resolveTap, isTap, TAP_RADIUS_MOVE } from './tap.js';
 import { settings, unlockAudio } from './audio.js';
 
 function loadState() {
@@ -27,15 +27,20 @@ function start(hotData) {
   const game = new Game(initial);
   const canvas = document.getElementById('cv');
   let renderer;
+  let cv = canvas;
   try {
-    renderer = webglAvailable() ? new Renderer3D(canvas, game, document.getElementById('ov')) : null;
+    renderer = webglAvailable() ? new Renderer3D(cv, game, document.getElementById('ov')) : null;
   } catch (e) {
     console.warn('3D indisponible, passage en 2D', e);
     renderer = null;
+    // Le canvas a pu garder un contexte WebGL : on le remplace par un neuf pour le dessin 2D.
+    const fresh = cv.cloneNode(false);
+    cv.replaceWith(fresh);
+    cv = fresh;
   }
   if (!renderer) {
     document.getElementById('ov').hidden = true;
-    renderer = new Renderer(canvas, game);
+    renderer = new Renderer(cv, game);
   }
 
   const save = () => {
@@ -61,16 +66,22 @@ function start(hotData) {
   // Reprise d'une sauvegarde de fin de journée
   if (game.state.phase === 'summary' && game.state.lastSummary) ui.showSummary(game.state.lastSummary);
 
+  // Android peut retirer le contexte WebGL (appli en arrière-plan) : on recharge proprement quand il revient.
+  if (renderer.scene) {
+    cv.addEventListener('webglcontextlost', (e) => { e.preventDefault(); save(); });
+    cv.addEventListener('webglcontextrestored', () => location.reload());
+  }
+
   // Toucher sur la carte
   // Un seul doigt suivi à la fois ; un geste annulé par le téléphone (pointercancel) compte s'il était un vrai tap.
   let down = null;
-  canvas.addEventListener('pointerdown', (e) => {
+  cv.addEventListener('pointerdown', (e) => {
     unlockAudio();
     if (down && e.pointerId !== down.id) return;
     down = { id: e.pointerId, x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now() };
-    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* rien */ }
+    try { cv.setPointerCapture(e.pointerId); } catch (err) { /* rien */ }
   });
-  canvas.addEventListener('pointermove', (e) => {
+  cv.addEventListener('pointermove', (e) => {
     if (down && e.pointerId === down.id) { down.lx = e.clientX; down.ly = e.clientY; }
   });
   const endTap = (e, cancelled) => {
@@ -80,17 +91,17 @@ function start(hotData) {
     const x = cancelled ? d.lx : e.clientX;
     const y = cancelled ? d.ly : e.clientY;
     if (!isTap(d, x, y, performance.now())) return;
-    const rect = canvas.getBoundingClientRect();
+    const rect = cv.getBoundingClientRect();
     const px = x - rect.left;
     const py = y - rect.top;
     renderer.addRipple(px, py);
-    const tile = resolveTap(game, renderer, px, py);
+    const tile = resolveTap(game, renderer, px, py, game.moving ? TAP_RADIUS_MOVE : undefined);
     if (!tile) return;
     ui.handleTapResult(game.tap(tile.r, tile.c));
   };
-  canvas.addEventListener('pointerup', (e) => endTap(e, false));
-  canvas.addEventListener('pointercancel', (e) => endTap(e, true));
-  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  cv.addEventListener('pointerup', (e) => endTap(e, false));
+  cv.addEventListener('pointercancel', (e) => endTap(e, true));
+  cv.addEventListener('contextmenu', (e) => e.preventDefault());
   document.addEventListener('pointerdown', unlockAudio, { once: true });
 
   window.addEventListener('resize', () => renderer.resize());
