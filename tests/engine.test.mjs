@@ -90,3 +90,78 @@ test('carte : client facturé trop = recette encaissée, prix minimum respecté'
   g.setPrice('eau', 0);
   assert.equal(g.state.prices.eau, g.minPrice('eau'));
 });
+
+// ---- V1.1 : retours de Jack du 20/10/2026
+import { nearestTarget, isTap, TAP_MOVE } from '../src/tap.js';
+import { customersPerDay } from '../src/data.js';
+
+test('toucher : un doigt à côté du « + » ou de l’ordinateur vise quand même la bonne case', () => {
+  const g = new Game();
+  const tiles = g.actionTiles();
+  // l'ordinateur et les emplacements libres de l'allée 1 font partie des cibles
+  assert.ok(tiles.some((t) => t.r === COMPUTER.tiles[0].r && t.c === COMPUTER.tiles[0].c));
+  const free = SHELF_SLOTS.find((sl) => sl.zone === 'A' && !g.state.shelves.some((x) => x.slot === sl.id));
+  assert.ok(g.isActionTile(free.r, free.c), 'le « + » libre doit être touchable');
+  // grille fictive : 40 px par case
+  const cands = tiles.map((t) => ({ ...t, x: t.c * 40 + 20, y: t.r * 40 + 20 }));
+  // doigt tombé sur le sol juste sous le « + » (case sans action)
+  const hit = nearestTarget(cands, free.c * 40 + 24, free.r * 40 + 20 + 30);
+  assert.deepEqual(hit, { r: free.r, c: free.c });
+  assert.equal(nearestTarget(cands, 2000, 2000), null, 'trop loin : rien');
+  // toucher du « + » → fiche « Nouvelle étagère »
+  assert.equal(g.tap(free.r, free.c).open, 'buyShelf');
+  // toucher de l'ordinateur → commande
+  assert.equal(g.tap(COMPUTER.tiles[0].r, COMPUTER.tiles[0].c).open, 'order');
+});
+
+test('toucher : geste annulé par le téléphone compté s’il était court et immobile', () => {
+  const d = { x: 100, y: 100, t: 0 };
+  assert.ok(isTap(d, 100 + TAP_MOVE - 1, 100, 200));
+  assert.ok(!isTap(d, 100 + TAP_MOVE + 5, 100, 200), 'glissé : pas un tap');
+  assert.ok(!isTap(d, 100, 100, 5000), 'appui long : pas un tap');
+});
+
+test('étagère : bouton « Placer » = premier emplacement libre, installé et payé', () => {
+  const g = new Game();
+  const id = g.firstFreeSlot();
+  assert.ok(id);
+  const before = g.state.coins;
+  const cost = g.nextShelfCost();
+  assert.ok(g.buyShelf(id).ok);
+  assert.equal(g.state.coins, before - cost);
+  assert.ok(g.state.shelves.some((x) => x.slot === id));
+  assert.notEqual(g.firstFreeSlot(), id);
+});
+
+test('popularité : plus haute = plus de clients, arnaque repérée = baisse rangée en « arnaque »', () => {
+  const s = newState();
+  const low = customersPerDay({ ...s, reputation: 5 }, 6);
+  const high = customersPerDay({ ...s, reputation: 95 }, 6);
+  assert.ok(high > low * 2, `${low} → ${high}`);
+  const g = new Game();
+  const r0 = g.state.reputation;
+  g.addReputation(-2, 'arnaque');
+  assert.equal(g.state.reputation, r0 - 2);
+  assert.equal(g.state.stats.rep.arnaque, -2);
+  // bilan du jour : choix en rayon et personnel comptés, détail dans le résumé
+  g.state.shelves[0] = { slot: g.state.shelves[0].slot, product: 'eau', qty: 18 };
+  g.openStore();
+  g.state.phase = 'closing';
+  g.endDay();
+  const sum = g.state.lastSummary;
+  assert.equal(sum.rep.arnaque, -2);
+  assert.ok('choix' in sum.rep);
+  // vieille sauvegarde sans détail de popularité : migrée sans plantage
+  const old = JSON.parse(serialize(newState()));
+  delete old.stats.rep;
+  const back = deserialize(JSON.stringify(old));
+  assert.deepEqual(back.stats.rep, {});
+});
+
+import { shouldCloseOnBackdrop, BACKDROP_GRACE_MS } from '../src/tap.js';
+test('panneau : le « click » qui suit le tap sur le plan ne referme plus le panneau ouvert', () => {
+  // bug : toucher l'ordinateur ou un « + » ouvrait le panneau puis le refermait aussitôt
+  assert.equal(shouldCloseOnBackdrop(false, 1000, 1010), false, 'doigt posé sur le plan, pas sur le fond');
+  assert.equal(shouldCloseOnBackdrop(true, 1000, 1000 + BACKDROP_GRACE_MS - 1), false, 'juste après l’ouverture');
+  assert.equal(shouldCloseOnBackdrop(true, 1000, 1000 + BACKDROP_GRACE_MS + 50), true, 'vrai toucher du fond : ferme');
+});

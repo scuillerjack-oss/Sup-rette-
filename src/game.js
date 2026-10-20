@@ -40,7 +40,7 @@ export function newState() {
 }
 
 function emptyStats() {
-  return { revenue: 0, spent: 0, sold: 0, served: 0, angry: 0, missing: 0, profitItems: 0 };
+  return { revenue: 0, spent: 0, sold: 0, served: 0, angry: 0, missing: 0, profitItems: 0, rep: {} };
 }
 
 export function serialize(state) {
@@ -62,6 +62,7 @@ export function deserialize(json) {
     }
     const base = newState();
     const merged = { ...base, ...s, staff: { ...base.staff, ...s.staff }, stats: { ...base.stats, ...s.stats } };
+    if (!merged.stats.rep || typeof merged.stats.rep !== 'object') merged.stats.rep = {};
     for (const p of PRODUCTS) {
       if (merged.prices[p.id] == null) merged.prices[p.id] = cents(p.market);
       merged.prices[p.id] = Math.max(minPriceOf(p), merged.prices[p.id]);
@@ -152,6 +153,28 @@ export class Game {
   }
 
   // ------------------------------------------------------------- requêtes
+  // Cases qui réagissent au toucher (pour viser juste même si le doigt tombe à côté).
+  actionTiles() {
+    const s = this.state;
+    const out = [...DELIVERY_SPOTS.map((d) => ({ r: d.r, c: d.c })), ...COMPUTER.tiles.map((t) => ({ r: t.r, c: t.c }))];
+    for (const sl of SHELF_SLOTS) {
+      if (this.zoneOwned(sl.zone) || s.shelves.some((x) => x.slot === sl.id)) out.push({ r: sl.r, c: sl.c });
+    }
+    for (const reg of REGISTERS) {
+      if (!s.registers.includes(reg.id)) continue;
+      for (const t of [...reg.counter, reg.staff]) out.push({ r: t.r, c: t.c });
+    }
+    return out;
+  }
+  isActionTile(r, c) {
+    return this.actionTiles().some((t) => t.r === r && t.c === c);
+  }
+  // Premier emplacement libre d'une allée ouverte (bouton « Placer » du menu Aménager).
+  firstFreeSlot() {
+    const s = this.state;
+    const sl = SHELF_SLOTS.find((x) => this.zoneOwned(x.zone) && !s.shelves.some((y) => y.slot === x.id));
+    return sl ? sl.id : null;
+  }
   shelfAt(r, c) {
     const slot = SHELF_SLOTS.find((s) => s.r === r && s.c === c);
     if (!slot) return null;
@@ -531,6 +554,9 @@ export class Game {
 
   endDay() {
     const s = this.state;
+    const pop = this.dailyPopularity();
+    this.addReputation(pop.choix, 'choix');
+    if (pop.personnel) this.addReputation(pop.personnel, 'personnel');
     const charges = cents(dailyCharges(s));
     s.coins -= charges;
     const summary = {
@@ -544,6 +570,7 @@ export class Game {
       missing: s.stats.missing,
       profit: s.stats.revenue - s.stats.spent - charges,
       reputation: s.reputation,
+      rep: { ...(s.stats.rep || {}) },
       staffEnding: []
     };
     for (const c of s.staff.cashiers) {
@@ -602,9 +629,28 @@ export class Game {
     }
   }
 
-  addReputation(d) {
+  // Popularité du magasin (0 à 100). « why » range la variation par cause pour le bilan du jour :
+  // prix, service, arnaque, choix, personnel.
+  addReputation(d, why = 'service') {
     const s = this.state;
+    const before = s.reputation;
     s.reputation = Math.max(0, Math.min(100, s.reputation + d));
+    const rep = s.stats.rep || (s.stats.rep = {});
+    rep[why] = (rep[why] || 0) + (s.reputation - before);
+  }
+
+  // Bilan de popularité de fin de journée : choix en rayon et qualité de l'équipe.
+  dailyPopularity() {
+    const s = this.state;
+    const types = this.stockedTypes();
+    const stocked = s.shelves.filter((x) => x.product);
+    const fill = stocked.length ? stocked.reduce((a, x) => a + x.qty, 0) / (stocked.length * SHELF_CAPACITY) : 0;
+    let choix = Math.max(-1, Math.min(1.5, 0.25 * types - 1));
+    if (fill < 0.2) choix -= 0.8;
+    else if (fill > 0.6) choix += 0.4;
+    const team = [...s.staff.cashiers, ...(s.staff.stocker ? [s.staff.stocker] : [])];
+    const personnel = Math.max(-0.5, Math.min(1, team.reduce((a, m) => a + 0.12 * (m.level - 2), 0)));
+    return { choix, personnel };
   }
 
   advanceTutorial(step) {
@@ -714,7 +760,7 @@ export class Game {
     shelf.qty -= take;
     if (shelf.qty === 0) this.emit('empty', { product: item.product });
     for (let i = 0; i < take; i++) cu.basket.push({ product: item.product, price: s.prices[item.product] });
-    this.addReputation(priceReputation(ratio) * take);
+    this.addReputation(priceReputation(ratio) * take, 'prix');
     if (take < item.want) {
       cu.mood -= 0.1;
       s.stats.missing++;
@@ -947,7 +993,7 @@ export class Game {
         // Le client remarque qu'on ne lui a pas rendu assez.
         noticed = true;
         cu.mood -= 0.7;
-        this.addReputation(-2);
+        this.addReputation(-2, 'arnaque');
         this.say(cu, '😠', 2.5);
       }
       this.completeSale(cu, co.paidWith - given);
@@ -987,7 +1033,7 @@ export class Game {
           // Client facturé trop cher : ça passe, mais s'il le remarque, la réputation en prend un coup.
           noticed = true;
           cu.mood -= 0.7;
-          this.addReputation(-2);
+          this.addReputation(-2, 'arnaque');
           this.say(cu, '😠', 2.5);
         }
         this.completeSale(cu, value);
@@ -1160,7 +1206,7 @@ export class Game {
           this.state.stats.staffErrors = (this.state.stats.staffErrors || 0) + 1;
           if (over && Math.random() < 0.7) {
             cu.mood -= 0.6;
-            this.addReputation(-1.5);
+            this.addReputation(-1.5, 'personnel');
             this.say(cu, '😠', 2.5);
           }
           this.emit('staffError', { name: cashier.name, over, amount: it.price });

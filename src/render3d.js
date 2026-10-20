@@ -687,6 +687,12 @@ export class Renderer3D {
     return { r, c };
   }
 
+  // Centre d'une case à l'écran (px CSS), à mi-hauteur des objets : sert à viser juste au doigt.
+  tileScreen(r, c) {
+    const y = r <= 1 ? 0.8 : 0.45;
+    return this.toScreen(c + 0.5, y, r + 0.5);
+  }
+
   addRipple(px, py) {
     this.ripples.push({ x: px, y: py, t: 0 });
   }
