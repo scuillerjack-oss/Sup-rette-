@@ -93,7 +93,7 @@ test('rangement : initiative, le rayon vide passe avant le rayon presque plein',
   assert.equal(g.stocker.task.product, 'pates', 'le rayon vide d’abord');
   run(g, 40);
   assert.equal(shelf(g, 'A5').qty, 12);
-  assert.equal(shelf(g, 'A3').qty, SHELF_CAPACITY, 'puis il complète l’eau (5 étoiles : dès qu’il manque des articles)');
+  assert.equal(shelf(g, 'A3').qty, SHELF_CAPACITY, 'puis il complète l’eau (5 étoiles : dès qu’il manque quelques articles)');
 });
 
 test('rangement : les étoiles ne changent que la vitesse et l’initiative (niveau 1 : il attend qu’un rayon baisse)', () => {
@@ -514,4 +514,52 @@ test('magasin complet V1.4 : tout reste atteignable depuis la porte, toutes all�
   const g = new Game(s);
   assert.equal(g.layoutProblem(g.blocked), null);
   for (const d of DELIVERY_SPOTS) assert.ok(findPath(g.blocked, DOOR.r, DOOR.c, d.r, d.c), `${d.r},${d.c}`);
+});
+
+// ------------------------------------------------------------------ corrections de la relecture
+test('relecture : pas de carton posé sur la case où quelqu’un se rend (plus personne « dans » une pile)', () => {
+  const g = shop({ level: 1, shelves: [['A3', 'eau', SHELF_CAPACITY]] });
+  g.stocker.idle = 999;
+  g.player.x = 6; g.player.y = 2; g.player.path = [];
+  assert.ok(g.moveTo(g.player, 1, 2));
+  const i = spotIndex(1, 2);
+  assert.match(g.canPlaceAt(i).reason, /va à cet endroit/);
+  // une livraison ne s'y pose pas non plus
+  g.state.coins = 1e6;
+  g.order({ chips: 1 });
+  for (let k = 0; k < 4; k++) g.update(0.05);
+  for (const p of g.state.pending) p.eta = 0;
+  g.update(0.01);
+  assert.equal(g.state.delivery[i].length, 0);
+  // si une pile apparaît malgré tout sur la case visée, il s'arrête au lieu d'entrer dedans
+  g.player.x = 6; g.player.y = 2;
+  g.moveTo(g.player, 1, 4);
+  g.state.delivery[spotIndex(1, 4)] = [{ product: 'eau', qty: 12 }];
+  g.reserveChanged();
+  assert.equal(g.player.path.length, 0);
+  // le magasinier n'est jamais recouvert à sa place d'attente
+  assert.equal(g.canPlaceAt(spotIndex(3, 8)).ok, false);
+});
+
+test('relecture : pile entourée (sauvegarde abîmée) jamais choisie pour reposer un carton', () => {
+  const g = shop({ level: 1, shelves: [['A3', 'eau', SHELF_CAPACITY]] });
+  const s = g.state;
+  for (const [r, c] of [[1, 0], [1, 1], [2, 0]]) s.delivery[spotIndex(r, c)] = [{ product: 'pates', qty: 12 }];
+  g.rebuild();
+  g.stocker.x = 5; g.stocker.y = 2;
+  const idx = g.findDropSpot('pates', g.stocker);
+  assert.notEqual(idx, spotIndex(1, 0), 'la pile du coin est entourée');
+  assert.ok(g.accessFor(g.stocker, idx));
+});
+
+test('relecture : 5 étoiles, pas d’aller-retour pour 1 article manquant', () => {
+  const g = shop({ level: 5, shelves: [['A3', 'eau', 17]], cartons: { 0: ['eau'] } });
+  let picks = 0;
+  const orig = g.takeCarton.bind(g);
+  g.takeCarton = (...a) => { picks++; return orig(...a); };
+  run(g, 30);
+  assert.equal(picks, 0);
+  const g2 = shop({ level: 5, shelves: [['A3', 'eau', 12]], cartons: { 0: ['eau'] } });
+  run(g2, 30);
+  assert.equal(shelf(g2, 'A3').qty, SHELF_CAPACITY, 'mais il complète un rayon à 12/18');
 });

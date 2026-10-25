@@ -145,7 +145,7 @@ export const STOCKER_LEVELS = [
   { speed: 2.1, perUnit: 0.3, weekCost: 170, think: 1.2, refill: 0.55, dig: 0.7 },
   { speed: 2.45, perUnit: 0.24, weekCost: 235, think: 0.9, refill: 0.7, dig: 0.55 },
   { speed: 2.8, perUnit: 0.19, weekCost: 320, think: 0.6, refill: 0.85, dig: 0.4 },
-  { speed: 3.2, perUnit: 0.15, weekCost: 430, think: 0.35, refill: 1, dig: 0.3 }
+  { speed: 3.2, perUnit: 0.15, weekCost: 430, think: 0.35, refill: 0.95, dig: 0.3 }
 ];
 
 // Apparence fixe d'un employé (V1.4) : tirée de son numéro « look », jamais au hasard à l'affichage.

@@ -15,7 +15,7 @@ prix et réputation, erreurs de caisse possibles, caissières à niveaux.
 ## Contenu V1
 1. **3D low-poly** (Three.js, embarqué) : magasin vu en perspective, lumière douce et ombres, personnages animés,
    articles visibles en rayon, cartons empilés, enseigne. Repli automatique en 2D si le téléphone n’a pas de WebGL.
-2. **Commande, réserve, mise en rayon** : 18 produits à licence, 24 places de réserve, étagères de 18 articles.
+2. **Commande, réserve, mise en rayon** : 18 produits à licence, 30 places de réserve (V1.4), étagères de 18 articles.
 3. **Caisse manuelle** : scanner, puis carte (taper le montant), appoint ou espèces (rendre la monnaie).
    Valider un mauvais montant est possible : client facturé trop → ça passe, mais s’il le remarque la réputation baisse ;
    pas assez rendu → idem ; trop rendu ou trop peu encaissé → perte d’argent.
@@ -156,9 +156,88 @@ confirmation « Nouvelle partie » ouverte en priorité.
 l'installation confirmera. Les nouveautés natives (purge du service worker, barre d'état) ne changent qu'avec un nouvel
 APK ; le jeu lui-même, oui, à chaque fusion.
 
-## Prochaine version (V1.4, ex-V1.3)
-0. D'abord les autres retours de bêta de Jack du 25/10 (cartons lisibles, réserve, magasinier, ordinateur retiré,
-   erreurs de caisse, « demandes non satisfaites », tutoriel facultatif), étape par étape.
+### V1.4 — rangement intelligent, réserve libre de 30 cartons, noms lisibles, erreurs de caisse (25/10/2026)
+Retours de bêta de Jack du 25/10 (faits sur la V1.0), étapes 2 et 3. Rien de la V1.2/V1.3 n'est retiré.
+
+**A. Lisibilité**
+- Chaque produit a un nom court (`short` dans `src/data.js`). Il est écrit en gros sur le dessus et la face avant
+  des cartons 3D, avec l'icône et une bande de la couleur du produit. Une étiquette blanche avec le nom est aussi
+  posée sur chaque carton de la réserve, à sa hauteur dans la pile : on la lit même quand les cartons sont empilés
+  ou juste derrière une étagère. Chaque étagère porte un panneau de couleur avec le nom du produit (« libre » si
+  elle n'a pas encore de produit). Même chose en 2D.
+- La première rangée d'étagères (allée 1) descend d'une ligne (3 → 4). Les cartons ne sont plus cachés derrière.
+- **Magasinier qui changeait de coiffure à chaque pas.** Cause : les chemins en escalier le faisaient pivoter à
+  chaque case, et on voyait alternativement son visage et l'arrière de sa tête. Correction : à longueur égale, les
+  chemins prennent maintenant le moins de virages possible. En plus, l'apparence de chaque employé est fixée par sa
+  fiche (`staffLook`) et n'est plus jamais tirée de l'identifiant d'affichage. Valable aussi pour les caissiers.
+
+**B. Rangement intelligent (magasinier)**, mêmes règles à tous les niveaux :
+- Un produit va dans SON rayon. Il ne va dans une étagère neuve sans produit que si ce produit n'a encore aucun
+  rayon. Jamais dans le rayon d'un autre produit, même vide (seul le joueur peut réaffecter un rayon vide).
+- Il ne prend un carton que s'il y a de la place dans un rayon compatible. Sinon il attend près de la réserve,
+  sans aller-retour sans fin.
+- Il prend l'initiative : rayon vide d'abord, puis le moins rempli. Il sort un carton coincé sous d'autres en
+  soulevant ceux du dessus, ce qui prend un peu de temps. Le scénario de Jack (eau pleine, pâtes vides, pâtes sous
+  l'eau) est testé aux 5 niveaux : il range les pâtes et laisse l'eau en réserve.
+- Chaque carton et chaque rayon visés sont réservés : deux employés ne font jamais la même tâche. Si le joueur
+  prend le carton visé, ou déplace l'étagère, il change de tâche aussitôt.
+- Les étoiles ne jouent que sur la vitesse et l'initiative. ⭐ : il complète un rayon sous 40 % et réfléchit 1,6 s
+  entre deux tâches. ⭐⭐⭐⭐⭐ : sous 95 % (s'il y a au moins un tiers de rayon à remplir), 0,35 s. C'est expliqué
+  dans la fiche Personnel (« Comment travaille le magasinier ? ») et sur chaque candidat (« complète un rayon sous
+  X % »).
+
+**C. Réserve**
+- L'ordinateur et son bureau sont supprimés (on commande avec le bouton 🛒 « Commander »). Les racks muraux
+  décoratifs aussi. La réserve occupe 3 lignes sur toute la largeur.
+- **Capacité : 30 cartons** (V1.3 : 24 annoncés, mais seule la ligne du fond servait vraiment), piles de 3 au plus.
+  Mesure au robot (6 parties de 120 jours), en cartons vendus par jour en moyenne (pointe entre parenthèses) :
+  niveaux 1-4 : 3,4 (5,7) ; 5-9 : 6,8 (12,5) ; 10-14 : 12,5 (20) ; 15 et plus : 15,8 (23).
+  Avec 30 places, un grand magasin a 2 jours d'avance sans que la réserve devienne un entrepôt.
+- Toute la zone de réserve est touchable. Mains vides, on prend le carton du dessus. Avec un carton, on le pose
+  sur la case touchée. Sont refusés, avec un message : pile pleine, quelqu'un debout sur la case ou en train d'y
+  aller, place d'attente du magasinier, et toute pose qui rendrait une pile, un rayon ou une personne
+  inaccessible. La même vérification protège l'achat et le déplacement d'une étagère de l'allée 1, qui touche la
+  réserve. Les livraisons vont d'office sur les palettes (lignes 1-2), avec le même produit si possible.
+
+**D. « Introuvables » → « Demandes non satisfaites »**
+- Ce que mesure le code : un client voulait un produit absent ou vide en rayon, ou en voulait plus qu'il n'en
+  restait. Chaque demande ratée rend le client moins content, ce qui fait baisser la popularité. Il n'y a pas
+  d'effet direct sur l'argent. Cet effet n'a pas été changé.
+- Bilan : pastille « ❓ N demandes non satisfaites ? ». En la touchant, on voit l'explication, les produits les
+  plus demandés et ce qu'on peut faire (remplir les rayons, commander d'avance, un rayon par licence).
+  L'objectif du jour et la fiche Popularité sont renommés pareil.
+
+**E. Erreurs de caisse (règle de Jack)**, en 3 étapes séparées dans `src/game.js` :
+- `cashError` (l'erreur) → `cashDetect` (le client la remarque-t-il ?) → `cashReaction` (la popularité).
+- En faveur du client (trop rendu, montant carte trop bas, article oublié par un caissier) : la popularité monte
+  un peu, +0,15 par pièce offerte, au plus +0,5. Le client est content 😊. Cause dans le bilan :
+  « 🎁 Erreurs de caisse en faveur du client ».
+- En faveur du magasin et remarquée (80 % pour la monnaie, 70 % pour la carte ou un caissier) : −2 (toi),
+  −1,5 (caissier).
+- En faveur du magasin et pas remarquée : rien.
+- Les réglages sont dans `CASH_ERRORS` (`src/data.js`).
+
+**Sauvegarde** : la clé `superette-save-v1` est inchangée. Une partie V1.3 se charge : les cartons restent sur
+les mêmes palettes, les étagères gardent leur emplacement (identifiants inchangés), le magasinier reçoit son
+apparence fixe, et une réserve abîmée ou trop longue est nettoyée (rien n'est perdu : le surplus revient en
+livraison).
+
+**Vérifications** : 66 tests Node, dont 27 nouveaux (scénario de Jack aux 5 niveaux, aucun mélange sur une longue
+journée, pas de prise sans place, pas de boucle, initiative, niveaux, étagère neuve, 2 employés, carton pris par le
+joueur, réserve 30, pose et reprise libres, poses invalides, carton coincé, livraisons, noms, apparence et virages,
+demandes non satisfaites, erreurs de caisse joueur et caissier, migration V1.3, magasin complet accessible).
+Parcours réel en Chrome mobile simulé (390×844), en 3D et en 2D : commande par le bouton, carton pris, posé
+derrière les étagères, repris et rangé, pile pleine refusée, magasinier dans le scénario de Jack, fiche Personnel,
+bilan avec explication, vieille partie V1.3 chargée et rangée. Rythme au robot inchangé (niveau 10 vers le jour 31).
+Relecture indépendante : aucun point bloquant. Corrigé : un carton pouvait se poser sur la case où quelqu'un
+allait ; une pile entourée (sauvegarde abîmée) n'est plus choisie ; plus d'aller-retour du 5 étoiles pour 1 article.
+
+**Limites connues / à décider avec Jack** : rendre trop de monnaie exprès fait gagner un peu de popularité. C'est
+sa règle, plafonnée à +0,5 par client et payée en pièces : à surveiller en bêta (baisser `gainPerCoin` si
+besoin). Le tutoriel facultatif et rejouable n'est pas dans cette étape.
+
+## Prochaine version (V1.5)
+0. Tutoriel de quelques jours, facultatif et rejouable depuis le menu (dernier retour de Jack du 25/10).
 1. **Concurrents dans le quartier** : 1 puis 2 magasins rivaux qui apparaissent avec la progression ; ils prennent des
    clients quand ta popularité est plus basse que la leur (facteur dans `dayMultiplier()`), font parfois des promos,
    et apparaissent dans le bilan (« Le Discount d'en face t'a pris 6 clients »).

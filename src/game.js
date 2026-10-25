@@ -638,6 +638,10 @@ export class Game {
     if (this.agents().some((a) => a !== ignore && Math.abs(a.x - d.c) < 0.85 && Math.abs(a.y - d.r) < 0.85)) {
       return { ok: false, reason: 'Quelqu’un se tient à cet endroit' };
     }
+    // Relecture V1.4 : ni sur la case où quelqu'un est en train d'aller.
+    const goingThere = (a) => a.path && a.path.length && a.path[a.path.length - 1].r === d.r && a.path[a.path.length - 1].c === d.c;
+    if (this.agents().some((a) => a !== ignore && goingThere(a))) return { ok: false, reason: 'Quelqu’un va à cet endroit' };
+    if (d.r === STOCKER_HOME.r && d.c === STOCKER_HOME.c && this.staffAgents().length && !ignore) return { ok: false, reason: 'Place du magasinier' };
     const blocked = new Uint8Array(this.blocked);
     blocked[d.r * 9 + d.c] = 1;
     const why = this.layoutProblem(blocked, ignore);
@@ -673,6 +677,11 @@ export class Game {
     return null;
   }
 
+  hasFreeSide(idx) {
+    const d = DELIVERY_SPOTS[idx];
+    return DIRS.some(([dr, dc]) => this.walkable(this.blocked, d.r + dr, d.c + dc));
+  }
+
   // Case libre voisine d'une pile, la plus proche à pied pour cet agent : { r, c, len } ou null.
   accessFor(agent, idx) {
     const d = DELIVERY_SPOTS[idx];
@@ -695,7 +704,8 @@ export class Game {
   findDropSpot(product, ignore = null) {
     const s = this.state;
     const order = [...AUTO_SPOTS, ...DELIVERY_SPOTS.keys()].filter((v, i, a) => a.indexOf(v) === i);
-    const ok = (i) => this.canPlaceAt(i, { ignore }).ok;
+    // Pile existante : il faut aussi pouvoir l'atteindre (sauvegarde abîmée : pile entourée).
+    const ok = (i) => this.canPlaceAt(i, { ignore }).ok && (!s.delivery[i].length || (ignore ? !!this.accessFor(ignore, i) : this.hasFreeSide(i)));
     for (const i of AUTO_SPOTS) {
       const st = s.delivery[i];
       if (st.length && st.length < SPOT_STACK && st[st.length - 1].product === product && ok(i)) return i;
@@ -900,6 +910,12 @@ export class Game {
     for (const a of [this.player, ...this.staffAgents()]) {
       if (a && a.path.length) {
         const last = a.path[a.path.length - 1];
+        if (this.blocked[last.r * 9 + last.c] && spotIndex(last.r, last.c) >= 0) {
+          // la case visée vient de recevoir des cartons : on s'arrête (le magasinier rechoisit une tâche)
+          if (a.kind === 'stocker') this.cancelTask(a, 0.3);
+          else { a.path = []; a.onArrive = null; }
+          continue;
+        }
         const ok = this.moveTo(a, last.r, last.c, a.onArrive);
         if (!ok && a.kind === 'stocker') this.cancelTask(a, 0.3); // plus de chemin : il choisit autre chose
       }
@@ -1670,7 +1686,8 @@ export class Game {
 
   // Le rayon a-t-il besoin de ce magasinier ? Vide : toujours ; sinon sous le seuil de son niveau.
   shelfNeedsStock(shelf, lv) {
-    return shelf.qty === 0 || shelf.qty <= SHELF_CAPACITY * lv.refill;
+    // Jamais pour 1 ou 2 articles : il faut de la place pour au moins un tiers de rayon (pas d'allers-retours).
+    return shelf.qty === 0 || (shelf.qty <= SHELF_CAPACITY * lv.refill && SHELF_CAPACITY - shelf.qty >= SHELF_CAPACITY / 3);
   }
 
   // Choisit la prochaine tâche : { shelf, product, carton, idx, above } ou null.

@@ -309,7 +309,7 @@ export class UI {
         <div class="step"><button data-a="minus" data-id="${p.id}" ${n ? '' : 'disabled'} aria-label="Retirer">−</button><output>${n}</output><button data-a="plus" data-id="${p.id}" aria-label="Ajouter">+</button></div>
       </div>`;
     }).join('');
-    return `${this.head('Commande fournisseur', `Place dans la réserve : ${Math.max(0, room)} carton${room > 1 ? 's' : ''} sur ${RESERVE_CAPACITY}`)}
+    return `${this.head('Commande fournisseur', `Place dans la réserve : ${Math.max(0, room)} carton${Math.max(0, room) > 1 ? 's' : ''} sur ${RESERVE_CAPACITY}`)}
       <div class="list">${rows}</div>
       <div class="sh-foot">
         <div class="total"><span>${count} carton${count > 1 ? 's' : ''}</span><b>${coinSvg}${money(total)}</b></div>
@@ -389,7 +389,7 @@ export class UI {
       ${section('cashier')}${section('stocker')}
       <div class="explain"><b>👷 Comment travaille le magasinier ?</b>
         <p>À tous les niveaux, il range toujours chaque produit dans son rayon : l’eau avec l’eau, les pâtes avec les pâtes. Il ne prend un carton que s’il a de la place dans le bon rayon, et il va chercher un carton même coincé sous un autre.</p>
-        <p>Les étoiles changent seulement sa vitesse et son initiative : ⭐ il ne s’occupe d’un rayon que lorsqu’il est vide ou presque (sous 40 %) et réfléchit un moment entre deux cartons ; ⭐⭐⭐⭐⭐ il complète les rayons dès qu’il y manque un article et enchaîne sans attendre.</p>
+        <p>Les étoiles changent seulement sa vitesse et son initiative : ⭐ il ne s’occupe d’un rayon que lorsqu’il est vide ou presque (sous 40 %) et réfléchit un moment entre deux cartons ; ⭐⭐⭐⭐⭐ il complète les rayons dès qu’il y manque quelques articles et enchaîne sans attendre.</p>
         <p>Une étagère neuve sans produit reçoit un produit qui n’a pas encore de rayon. Pour changer le produit d’un rayon, c’est toi qui décides : vide-le et range-y un autre carton.</p></div>
       <p class="credits">Nouveaux candidats chaque semaine. Les meilleurs profils arrivent quand ton magasin monte de niveau.</p>`;
   }
