@@ -15,14 +15,33 @@ export const ROWS = 15;
 export const DOOR = { r: 14, c: 4 };
 export const SPAWN = { r: 13, c: 4 };
 
-// Emplacements de livraison (cartons posés au sol dans la réserve).
-export const DELIVERY_SPOTS = [0, 1, 2, 3, 4, 5].map((c) => ({ r: 1, c }));
-export const SPOT_STACK = 4; // cartons empilés par emplacement
-export const COMPUTER = { tiles: [{ r: 1, c: 7 }, { r: 1, c: 8 }], access: { r: 2, c: 7 } };
+// Réserve (V1.4) : lignes 1 à 3, derrière les étagères. L'ordinateur est retiré (on commande avec le bouton
+// « Commander ») : toute la largeur du mur du fond sert de palettes. Le joueur pose ses cartons sur la palette
+// de son choix en touchant n'importe où dans la réserve ; on prend/pose un carton depuis la ligne 2 (allée).
+export const RESERVE_ROWS = [1, 2, 3];
+export const SHOP_TOP = 4; // première ligne du carrelage du magasin (la réserve est au-dessus)
+// Toutes les cases de la réserve (3 lignes × 9) sont touchables : le joueur pose ses cartons où il veut,
+// tant que chaque pile reste accessible et que personne n'est enfermé. Index = (r − 1) × 9 + c : les 6
+// emplacements de la V1.3 (ligne 1, colonnes 0 à 5) gardent le même numéro (partie V1.3 intacte).
+export const DELIVERY_SPOTS = [];
+for (const r of RESERVE_ROWS) for (let c = 0; c < COLS; c++) DELIVERY_SPOTS.push({ r, c });
+export const spotIndex = (r, c) => (RESERVE_ROWS.includes(r) && c >= 0 && c < COLS ? (r - 1) * COLS + c : -1);
+// Palettes dessinées au sol (lignes 1 et 2, trois petites allées en colonnes 1, 4 et 7) : c'est là que le
+// livreur pose les cartons, du fond vers l'avant. La ligne 3 reste un couloir derrière les étagères, pour
+// que les cartons ne soient jamais cachés par les rayons.
+export const PALLET_COLS = [0, 2, 3, 5, 6, 8];
+export const AUTO_SPOTS = [1, 2].flatMap((r) => PALLET_COLS.map((c) => spotIndex(r, c)));
+export const SPOT_STACK = 3; // cartons empilés au plus par case (V1.3 : 4) : piles basses = noms lisibles
+// Capacité de la réserve : 30 cartons (V1.3 : 24 annoncés, mais seule la ligne du fond était utilisable).
+// Mesure au robot (docs/CAHIER-DES-CHARGES.md, V1.4) : quelques cartons par jour au début, 12 à 16 dans un
+// magasin plein. 30 places = 2 jours d'avance pour un grand magasin, sans transformer la réserve en entrepôt.
+export const RESERVE_CAPACITY = 30;
+export const STOCKER_HOME = { r: 3, c: 8 }; // où le magasinier attend quand il n'a rien à faire
 
 // Emplacements d'étagères : 3 zones de 7 (la zone A est ouverte au départ).
+// V1.4 : la première rangée descend d'une ligne (3 → 4) pour que les cartons restent visibles derrière.
 export const ZONES = [
-  { id: 'A', row: 3, label: 'Allée 1', cost: 0, level: 1 },
+  { id: 'A', row: 4, label: 'Allée 1', cost: 0, level: 1 },
   { id: 'B', row: 6, label: 'Allée 2', cost: 900, level: 5 },
   { id: 'C', row: 9, label: 'Allée 3', cost: 3200, level: 10 }
 ];
@@ -56,26 +75,27 @@ export const REGISTERS = [
 
 // --- Catalogue ---------------------------------------------------------------
 // unitCost = cartonCost / qty ; market = prix de vente conseillé (marge ≈ ×2).
+// short : nom court écrit sur les cartons et les frontons d'étagères (lisible sur téléphone).
 // shape : forme du dessin (bottle, box, bag, can, carton, jar, bar, tube, pack, wheel).
 export const PRODUCTS = [
-  { id: 'eau', name: 'Eau', brand: 'Source Claire', level: 1, licence: 0, qty: 12, cartonCost: 6.0, market: 1.0, color: '#4aa8e8', shape: 'bottle' },
-  { id: 'pates', name: 'Pâtes', brand: 'Nonna', level: 1, licence: 0, qty: 12, cartonCost: 9.6, market: 1.6, color: '#f2b632', shape: 'box' },
-  { id: 'chips', name: 'Chips', brand: 'Croc', level: 1, licence: 0, qty: 12, cartonCost: 12.0, market: 2.0, color: '#e8483d', shape: 'bag' },
-  { id: 'soda', name: 'Soda', brand: 'Cola Boum', level: 2, licence: 80, qty: 12, cartonCost: 8.4, market: 1.5, color: '#c4262e', shape: 'can' },
-  { id: 'biscuits', name: 'Biscuits', brand: 'Mamie', level: 2, licence: 120, qty: 12, cartonCost: 14.4, market: 2.4, color: '#b97a3b', shape: 'pack' },
-  { id: 'lait', name: 'Lait', brand: 'Prairie', level: 3, licence: 200, qty: 12, cartonCost: 8.4, market: 1.4, color: '#e9eef5', shape: 'carton' },
-  { id: 'cafe', name: 'Café', brand: 'Noir Intense', level: 4, licence: 350, qty: 6, cartonCost: 15.0, market: 5.0, color: '#5a3b28', shape: 'pack' },
-  { id: 'cereales', name: 'Céréales', brand: 'Croustis', level: 5, licence: 500, qty: 8, cartonCost: 14.4, market: 3.6, color: '#f08a24', shape: 'box' },
-  { id: 'savon', name: 'Savon', brand: 'Bulle', level: 6, licence: 700, qty: 12, cartonCost: 18.0, market: 3.0, color: '#9fd9c8', shape: 'bar' },
-  { id: 'chocolat', name: 'Chocolat', brand: 'Choco Lune', level: 7, licence: 900, qty: 12, cartonCost: 14.4, market: 2.6, color: '#7a4a8c', shape: 'bar' },
-  { id: 'riz', name: 'Riz', brand: 'Doré', level: 8, licence: 1200, qty: 12, cartonCost: 13.2, market: 2.2, color: '#e8d9a8', shape: 'bag' },
-  { id: 'jus', name: 'Jus d’orange', brand: 'Soleil', level: 9, licence: 1500, qty: 12, cartonCost: 16.8, market: 2.8, color: '#ff9f1c', shape: 'carton' },
-  { id: 'shampoing', name: 'Shampoing', brand: 'Nuage', level: 10, licence: 2000, qty: 6, cartonCost: 14.4, market: 4.8, color: '#6c8cff', shape: 'tube' },
-  { id: 'fromage', name: 'Fromage', brand: 'Alpin', level: 12, licence: 2600, qty: 6, cartonCost: 18.0, market: 6.0, color: '#ffd23f', shape: 'wheel' },
-  { id: 'confiture', name: 'Confiture', brand: 'Fraise des bois', level: 14, licence: 3200, qty: 8, cartonCost: 16.0, market: 4.0, color: '#d6336c', shape: 'jar' },
-  { id: 'the', name: 'Thé', brand: 'Jardin', level: 16, licence: 4000, qty: 10, cartonCost: 18.0, market: 3.6, color: '#5fa05a', shape: 'box' },
-  { id: 'dentifrice', name: 'Dentifrice', brand: 'Éclat', level: 18, licence: 5000, qty: 12, cartonCost: 15.6, market: 2.8, color: '#38b6c9', shape: 'tube' },
-  { id: 'bonbons', name: 'Bonbons', brand: 'Pop', level: 20, licence: 6500, qty: 24, cartonCost: 14.4, market: 1.3, color: '#ff5fa2', shape: 'jar' }
+  { id: 'eau', name: 'Eau', short: 'Eau', brand: 'Source Claire', level: 1, licence: 0, qty: 12, cartonCost: 6.0, market: 1.0, color: '#4aa8e8', shape: 'bottle' },
+  { id: 'pates', name: 'Pâtes', short: 'Pâtes', brand: 'Nonna', level: 1, licence: 0, qty: 12, cartonCost: 9.6, market: 1.6, color: '#f2b632', shape: 'box' },
+  { id: 'chips', name: 'Chips', short: 'Chips', brand: 'Croc', level: 1, licence: 0, qty: 12, cartonCost: 12.0, market: 2.0, color: '#e8483d', shape: 'bag' },
+  { id: 'soda', name: 'Soda', short: 'Soda', brand: 'Cola Boum', level: 2, licence: 80, qty: 12, cartonCost: 8.4, market: 1.5, color: '#c4262e', shape: 'can' },
+  { id: 'biscuits', name: 'Biscuits', short: 'Biscuits', brand: 'Mamie', level: 2, licence: 120, qty: 12, cartonCost: 14.4, market: 2.4, color: '#b97a3b', shape: 'pack' },
+  { id: 'lait', name: 'Lait', short: 'Lait', brand: 'Prairie', level: 3, licence: 200, qty: 12, cartonCost: 8.4, market: 1.4, color: '#e9eef5', shape: 'carton' },
+  { id: 'cafe', name: 'Café', short: 'Café', brand: 'Noir Intense', level: 4, licence: 350, qty: 6, cartonCost: 15.0, market: 5.0, color: '#5a3b28', shape: 'pack' },
+  { id: 'cereales', name: 'Céréales', short: 'Céréales', brand: 'Croustis', level: 5, licence: 500, qty: 8, cartonCost: 14.4, market: 3.6, color: '#f08a24', shape: 'box' },
+  { id: 'savon', name: 'Savon', short: 'Savon', brand: 'Bulle', level: 6, licence: 700, qty: 12, cartonCost: 18.0, market: 3.0, color: '#9fd9c8', shape: 'bar' },
+  { id: 'chocolat', name: 'Chocolat', short: 'Choco', brand: 'Choco Lune', level: 7, licence: 900, qty: 12, cartonCost: 14.4, market: 2.6, color: '#7a4a8c', shape: 'bar' },
+  { id: 'riz', name: 'Riz', short: 'Riz', brand: 'Doré', level: 8, licence: 1200, qty: 12, cartonCost: 13.2, market: 2.2, color: '#e8d9a8', shape: 'bag' },
+  { id: 'jus', name: 'Jus d’orange', short: 'Jus', brand: 'Soleil', level: 9, licence: 1500, qty: 12, cartonCost: 16.8, market: 2.8, color: '#ff9f1c', shape: 'carton' },
+  { id: 'shampoing', name: 'Shampoing', short: 'Shampo', brand: 'Nuage', level: 10, licence: 2000, qty: 6, cartonCost: 14.4, market: 4.8, color: '#6c8cff', shape: 'tube' },
+  { id: 'fromage', name: 'Fromage', short: 'Fromage', brand: 'Alpin', level: 12, licence: 2600, qty: 6, cartonCost: 18.0, market: 6.0, color: '#ffd23f', shape: 'wheel' },
+  { id: 'confiture', name: 'Confiture', short: 'Confit.', brand: 'Fraise des bois', level: 14, licence: 3200, qty: 8, cartonCost: 16.0, market: 4.0, color: '#d6336c', shape: 'jar' },
+  { id: 'the', name: 'Thé', short: 'Thé', brand: 'Jardin', level: 16, licence: 4000, qty: 10, cartonCost: 18.0, market: 3.6, color: '#5fa05a', shape: 'box' },
+  { id: 'dentifrice', name: 'Dentifrice', short: 'Dentifr.', brand: 'Éclat', level: 18, licence: 5000, qty: 12, cartonCost: 15.6, market: 2.8, color: '#38b6c9', shape: 'tube' },
+  { id: 'bonbons', name: 'Bonbons', short: 'Bonbons', brand: 'Pop', level: 20, licence: 6500, qty: 24, cartonCost: 14.4, market: 1.3, color: '#ff5fa2', shape: 'jar' }
 ];
 export const PRODUCT_BY_ID = Object.fromEntries(PRODUCTS.map((p) => [p.id, p]));
 
@@ -115,13 +135,26 @@ export const CASHIER_LEVELS = [
   { secPerItem: 0.76, error: 0.01, weekCost: 380 },
   { secPerItem: 0.6, error: 0, weekCost: 520 }
 ];
+// Magasinier (V1.4) : TOUS les niveaux rangent chaque produit dans son propre rayon (jamais ailleurs).
+// Les étoiles ne jouent que sur la vitesse et l'initiative :
+//  think : temps de réflexion entre deux tâches (s) ; refill : il complète un rayon dès qu'il descend
+//  sous cette part de sa capacité (un rayon vide est toujours prioritaire) ; dig : secondes pour sortir
+//  un carton coincé sous un autre (par carton à soulever).
 export const STOCKER_LEVELS = [
-  { speed: 1.8, perUnit: 0.36, weekCost: 120 },
-  { speed: 2.1, perUnit: 0.3, weekCost: 170 },
-  { speed: 2.45, perUnit: 0.24, weekCost: 235 },
-  { speed: 2.8, perUnit: 0.19, weekCost: 320 },
-  { speed: 3.2, perUnit: 0.15, weekCost: 430 }
+  { speed: 1.8, perUnit: 0.36, weekCost: 120, think: 1.6, refill: 0.4, dig: 0.9 },
+  { speed: 2.1, perUnit: 0.3, weekCost: 170, think: 1.2, refill: 0.55, dig: 0.7 },
+  { speed: 2.45, perUnit: 0.24, weekCost: 235, think: 0.9, refill: 0.7, dig: 0.55 },
+  { speed: 2.8, perUnit: 0.19, weekCost: 320, think: 0.6, refill: 0.85, dig: 0.4 },
+  { speed: 3.2, perUnit: 0.15, weekCost: 430, think: 0.35, refill: 1, dig: 0.3 }
 ];
+
+// Apparence fixe d'un employé (V1.4) : tirée de son numéro « look », jamais au hasard à l'affichage.
+const STAFF_SKINS = ['#f6d3b3', '#c98d63', '#e8b48f', '#9c6644', '#f1c7a5', '#6f4a33'];
+const STAFF_HAIRS = ['#a8642e', '#2b1d14', '#e6c068', '#5a3a22', '#1f1f1f', '#c0462b'];
+export function staffLook(member) {
+  const k = Math.abs(Math.floor(Number(member && member.look) || 0));
+  return Object.freeze({ skin: STAFF_SKINS[k % 6], hair: STAFF_HAIRS[(k + 1) % 6], hairStyle: k % 3 });
+}
 export const FIRST_NAMES = ['Léa', 'Momo', 'Inès', 'Hugo', 'Sarah', 'Karim', 'Chloé', 'Lucas', 'Nadia', 'Tom', 'Jade', 'Yanis', 'Manon', 'Enzo', 'Lina', 'Bilal', 'Zoé', 'Théo', 'Amel', 'Noah'];
 // Meilleur niveau de candidat proposé selon le niveau du magasin.
 export function maxCandidateLevel(storeLevel) {
@@ -172,5 +205,19 @@ export function goalReward(level) {
 
 export const DELIVERY_SECONDS = 10; // délai de livraison (temps réel, ×vitesse)
 export const PATIENCE_SECONDS = 55; // patience dans la file (temps réel en ×1)
+
+// --- Erreurs de caisse (V1.4, règle de Jack) ---------------------------------
+// 1) l'erreur : écart entre ce que le client paie vraiment et ce qu'il devait ;
+// 2) la détection : le client s'en rend-il compte ? ;
+// 3) la réaction : effet sur la popularité.
+//  - en faveur du client (il paie moins) : il est content, la popularité monte un peu (selon le montant) ;
+//  - en faveur du magasin (il paie trop) : s'il le remarque, la popularité baisse ; sinon, rien.
+export const CASH_ERRORS = {
+  notice: { change: 0.8, card: 0.7, cashier: 0.7 }, // chance de remarquer une erreur en faveur du magasin
+  gainPerCoin: 0.15, // popularité gagnée par pièce offerte par erreur
+  gainMax: 0.5,
+  lossPlayer: 2, // client qui remarque qu'on l'a fait payer trop (caisse tenue par toi)
+  lossCashier: 1.5 // idem, erreur d'un caissier
+};
 export const BILLS = [50, 20, 10, 5];
 export const CHANGE_MONEY = [20, 10, 5, 2, 1, 0.5, 0.2, 0.1];

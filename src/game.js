@@ -1,12 +1,12 @@
 // Moteur du jeu : état, journées, clients, stock, employés, caisse. Aucun DOM ici.
 import {
-  DAY_START, DAY_END, GAME_MIN_PER_SEC, DOOR, SPAWN, DELIVERY_SPOTS, SPOT_STACK, COMPUTER,
+  DAY_START, DAY_END, GAME_MIN_PER_SEC, DOOR, SPAWN, DELIVERY_SPOTS, SPOT_STACK, AUTO_SPOTS, RESERVE_CAPACITY, STOCKER_HOME, spotIndex, CASH_ERRORS,
   ZONES, SHELF_SLOTS, SHELF_CAPACITY, REGISTERS, PRODUCTS, PRODUCT_BY_ID, START_COINS, START_SHELVES,
-  MAX_LEVEL, xpForLevel, shelfCost, dailyCharges, STAFF, CONTRACT_DAYS, buyChance, customersPerDay,
+  MAX_LEVEL, staffLook, xpForLevel, shelfCost, dailyCharges, STAFF, CONTRACT_DAYS, buyChance, customersPerDay,
   CASHIER_LEVELS, STOCKER_LEVELS, FIRST_NAMES, maxCandidateLevel, priceReputation,
   DELIVERY_SECONDS, PATIENCE_SECONDS, BILLS, EVENTS, EVENT_BY_ID, GOALS_PER_DAY, GOALS_FROM_DAY, goalReward
 } from './data.js';
-import { buildBlocked, findPath } from './layout.js';
+import { buildBlocked, findPath, reachable, DIRS } from './layout.js';
 
 export const cents = (v) => Math.round(v * 100);
 
@@ -42,7 +42,38 @@ export function newState() {
 }
 
 function emptyStats() {
-  return { revenue: 0, spent: 0, sold: 0, served: 0, angry: 0, missing: 0, profitItems: 0, perfect: 0, rep: {} };
+  // missing = demandes non satisfaites (un client voulait un produit absent ou en quantité insuffisante) ;
+  // missingBy = le détail par produit (V1.4, pour le bilan).
+  return { revenue: 0, spent: 0, sold: 0, served: 0, angry: 0, missing: 0, missingBy: {}, profitItems: 0, perfect: 0, rep: {} };
+}
+
+// ---------------------------------------------------------------- erreurs de caisse (V1.4)
+// Trois étapes séparées : l'erreur, sa détection par le client, la réaction (popularité).
+// 1) L'erreur : due = ce que le client devait payer, paid = ce qu'il a réellement payé.
+export function cashError(due, paid) {
+  const diff = paid - due;
+  if (diff === 0) return { diff: 0, favor: null, amount: 0 };
+  return { diff, favor: diff < 0 ? 'client' : 'magasin', amount: Math.abs(diff) };
+}
+// 2) La détection : une erreur en faveur du client ne lui coûte rien (il n'a rien à « remarquer ») ;
+//    une erreur en faveur du magasin est remarquée avec la probabilité « chance ».
+export function cashDetect(err, chance, rnd = Math.random) {
+  if (err.favor !== 'magasin') return false;
+  return rnd() < chance;
+}
+// 3) La réaction (règle de Jack) :
+//    - en faveur du client → la popularité monte un peu (selon le montant, plafonné) ;
+//    - en faveur du magasin et remarquée → la popularité baisse ;
+//    - en faveur du magasin et pas remarquée → rien.
+export function cashReaction(err, noticed, who = 'player') {
+  if (err.favor === 'client') {
+    const rep = Math.min(CASH_ERRORS.gainMax, Math.round(err.amount / 100 * CASH_ERRORS.gainPerCoin * 100) / 100);
+    return { rep, why: 'cadeau', mood: 0.1, bubble: '😊' };
+  }
+  if (err.favor === 'magasin' && noticed) {
+    return { rep: -(who === 'cashier' ? CASH_ERRORS.lossCashier : CASH_ERRORS.lossPlayer), why: 'arnaque', mood: who === 'cashier' ? -0.6 : -0.7, bubble: '😠' };
+  }
+  return { rep: 0, why: null, mood: 0, bubble: null };
 }
 
 export function serialize(state) {
@@ -65,6 +96,13 @@ export function deserialize(json) {
     const base = newState();
     const merged = { ...base, ...s, staff: { ...base.staff, ...s.staff }, stats: { ...base.stats, ...s.stats } };
     if (!merged.stats.rep || typeof merged.stats.rep !== 'object') merged.stats.rep = {};
+    // V1.4 : réserve agrandie (6 → 9 palettes, ordinateur retiré). Les cartons d'une partie V1.3 restent
+    // sur leurs palettes ; les nouvelles palettes arrivent vides. Données abîmées : ignorées.
+    const del = Array.isArray(merged.delivery) ? merged.delivery : [];
+    merged.delivery = DELIVERY_SPOTS.map((_, i) => (Array.isArray(del[i]) ? del[i].filter((c) => c && PRODUCT_BY_ID[c.product] && c.qty > 0) : []));
+    for (let i = DELIVERY_SPOTS.length; i < del.length; i++) {
+      for (const c of Array.isArray(del[i]) ? del[i] : []) if (c && PRODUCT_BY_ID[c.product] && c.qty > 0) merged.pending.push({ product: c.product, eta: 1, qty: c.qty });
+    }
     if (merged.event && !EVENT_BY_ID[merged.event]) merged.event = null;
     if (merged.goals && (!Array.isArray(merged.goals.list) || merged.goals.list.some((g) => !GOAL_KINDS[g.kind]))) merged.goals = null;
     for (const p of PRODUCTS) {
@@ -103,7 +141,7 @@ export const GOAL_KINDS = {
   sell: { icon: '📦', label: (t) => `Vendre ${t} articles`, value: (st) => st.sold },
   perfect: { icon: '🪙', label: (t) => `Rendre la monnaie juste ${t} fois`, value: (st) => st.perfect || 0 },
   calm: { icon: '😌', label: () => 'Aucun client parti fâché', value: (st) => st.angry, max: true, min: (st) => st.served >= 5 },
-  stock: { icon: '❓', label: (t) => `Au plus ${t} articles introuvables`, value: (st) => st.missing, max: true, min: (st) => st.served >= 5 },
+  stock: { icon: '❓', label: (t) => `Au plus ${t} demandes non satisfaites`, value: (st) => st.missing, max: true, min: (st) => st.served >= 5 },
   pop: { icon: '⭐', label: (t) => `Gagner ${t} points de popularité`, value: (st) => Math.max(0, Math.floor(sumRep(st) * 10) / 10) }
 };
 
@@ -179,7 +217,7 @@ export class Game {
       // Mode « Déplacer » : seules les étagères et les « + » libres réagissent (grosses cibles).
       return SHELF_SLOTS.filter((sl) => s.shelves.some((x) => x.slot === sl.id) || this.zoneOwned(sl.zone)).map((sl) => ({ r: sl.r, c: sl.c }));
     }
-    const out = [...DELIVERY_SPOTS.map((d) => ({ r: d.r, c: d.c })), ...COMPUTER.tiles.map((t) => ({ r: t.r, c: t.c }))];
+    const out = DELIVERY_SPOTS.map((d) => ({ r: d.r, c: d.c }));
     for (const sl of SHELF_SLOTS) {
       if (this.zoneOwned(sl.zone) || s.shelves.some((x) => x.slot === sl.id)) out.push({ r: sl.r, c: sl.c });
     }
@@ -214,8 +252,10 @@ export class Game {
   deliveryCount() {
     return this.state.delivery.reduce((n, st) => n + st.length, 0);
   }
+  // Places libres dans la réserve : 30 cartons au total, en comptant ceux en route et ceux qu'on porte.
   deliveryRoom() {
-    return DELIVERY_SPOTS.length * SPOT_STACK - this.deliveryCount() - this.state.pending.length;
+    const carried = [this.player, this.stocker].filter((a) => a && a.carry).length;
+    return RESERVE_CAPACITY - this.deliveryCount() - this.state.pending.length - carried;
   }
   xpNeeded() {
     return xpForLevel(this.state.level);
@@ -251,33 +291,44 @@ export class Game {
     if (s.phase === 'summary') return null;
     if (this.moving) return this.tapMove(r, c);
     const p = this.player;
-    // Emplacement de livraison
-    const spotIdx = DELIVERY_SPOTS.findIndex((d) => d.r === r && d.c === c);
+    // Réserve (V1.4) : toute la zone est touchable. Avec un carton en main : on le pose sur cette case ;
+    // les mains vides : on prend le carton du dessus de la pile touchée.
+    const spotIdx = spotIndex(r, c);
     if (spotIdx >= 0) {
       const stack = s.delivery[spotIdx];
       if (p.carry) {
-        if (stack.length >= SPOT_STACK) return this.toast('Cet emplacement est plein');
+        const chk = this.canPlaceAt(spotIdx, { ignore: p });
+        if (!chk.ok) {
+          this.emit('sfx', { name: 'error' });
+          return this.toast(chk.reason);
+        }
+        const acc = this.accessFor(p, spotIdx);
+        if (!acc) return this.toast('Impossible d’atteindre cette case');
         this.leaveRegister();
-        this.moveTo(p, 2, c, () => {
-          stack.push(p.carry);
-          p.carry = null;
-          this.emit('sfx', { name: 'drop' });
-        });
+        this.moveTo(p, acc.r, acc.c, () => this.dropCarton(p, spotIdx));
         return { moved: true };
       }
-      if (!stack.length) return this.toast('Rien ici : commande sur l’ordinateur 🖥️');
+      if (!stack.length) {
+        if (!this.blocked[r * 9 + c]) {
+          this.leaveRegister();
+          this.moveTo(p, r, c);
+        }
+        if (!this.deliveryCount()) return this.toast('Réserve vide : commande avec le bouton « Commander » en bas');
+        return { moved: true };
+      }
+      const acc = this.accessFor(p, spotIdx);
+      if (!acc) return this.toast('Cette pile est bloquée : libère un passage à côté');
       this.leaveRegister();
-      this.moveTo(p, 2, c, () => {
+      this.moveTo(p, acc.r, acc.c, () => {
         if (p.carry || !stack.length) return;
-        p.carry = stack.pop();
+        const carton = stack[stack.length - 1];
+        this.takeCarton(p, spotIdx, carton);
         this.emit('sfx', { name: 'pick' });
         this.emit('haptic', { ms: 12 });
         if (s.tutorial === 1) this.advanceTutorial(2);
       });
       return { moved: true };
     }
-    // Ordinateur
-    if (COMPUTER.tiles.some((t) => t.r === r && t.c === c)) return { open: 'order' };
     // Étagère
     const sh = this.shelfAt(r, c);
     if (sh) {
@@ -340,6 +391,8 @@ export class Game {
   startFill(agent, shelf, slot) {
     if (!agent.carry) return;
     if (shelf.product && shelf.product !== agent.carry.product && shelf.qty > 0) return;
+    // V1.4 : le personnel ne range JAMAIS un produit dans le rayon d'un autre produit, même vide.
+    if (agent.kind !== 'player' && !this.staffMayFill(shelf, agent.carry.product)) return;
     if (!shelf.product || shelf.qty === 0) shelf.product = agent.carry.product;
     agent.dir = -1;
     agent.fill = { shelf, slot, t: 0 };
@@ -417,7 +470,11 @@ export class Game {
     if (!slot || !this.zoneOwned(slot.zone) || s.shelves.some((x) => x.slot === slotId)) return { ok: false };
     const cost = this.nextShelfCost();
     if (s.coins < cost) return { ok: false, reason: 'Pas assez de pièces' };
-    // Ne jamais enfermer quelqu'un : l'accès devant l'étagère doit rester libre (il l'est par construction).
+    // V1.4 : la rangée du haut touche la réserve : ne jamais couper l'accès aux cartons ni enfermer quelqu'un.
+    const test = new Uint8Array(this.blocked);
+    test[slot.r * 9 + slot.c] = 1;
+    const why = this.layoutProblem(test);
+    if (why) return { ok: false, reason: `Pas ici : ${why}` };
     s.coins -= cost;
     s.shelves.push({ slot: slotId, product: null, qty: 0 });
     this.rebuild();
@@ -536,22 +593,152 @@ export class Game {
     const st = s.staff.stocker;
     if (st && st.days > 0 && !this.stocker) {
       const lv = STOCKER_LEVELS[st.level - 1];
-      this.stocker = this.makeAgent(2, 8, { kind: 'stocker', speed: lv.speed, perUnit: lv.perUnit, carry: null, idle: 0, name: st.name, lookIndex: st.look });
+      this.stocker = this.makeAgent(STOCKER_HOME.r, STOCKER_HOME.c, { kind: 'stocker', level: st.level, speed: lv.speed, perUnit: lv.perUnit, carry: null, idle: 0, task: null, name: st.name, lookIndex: st.look, look: staffLook(st) });
     }
     if ((!st || st.days <= 0) && this.stocker) {
-      if (this.stocker.carry) this.returnCarton(this.stocker.carry);
+      if (this.stocker.carry) {
+        const c = this.stocker.carry;
+        this.stocker.carry = null;
+        this.returnCarton(c);
+      }
       this.stocker = null;
     }
   }
 
+  // Carton remis dans la réserve sans marcher (fin de contrat du magasinier) : sur la meilleure case valide.
   returnCarton(carry) {
+    const idx = this.findDropSpot(carry.product);
+    if (idx >= 0) {
+      this.state.delivery[idx].push(carry);
+      this.reserveChanged();
+    } else this.state.pending.push({ product: carry.product, eta: 1, qty: carry.qty });
+  }
+
+  // ------------------------------------------------------------- réserve (V1.4)
+  agents() {
+    return [this.player, this.stocker, ...(this.helpers || []), ...this.customers].filter(Boolean);
+  }
+
+  // La grille dépend de la réserve (une case avec des cartons bloque le passage) : on la refait, et tout le
+  // monde recalcule son chemin.
+  reserveChanged() {
+    this.rebuild();
+    this.repathAll();
+  }
+
+  // Peut-on poser un carton sur cette case ? Pile pas pleine, personne debout dessus, et aucune pile ni
+  // personne enfermée (chaque pile garde une case libre à côté, reliée à la porte).
+  canPlaceAt(idx, { ignore = null } = {}) {
     const s = this.state;
-    let best = -1;
-    for (let i = 0; i < s.delivery.length; i++) {
-      if (s.delivery[i].length < SPOT_STACK && (best < 0 || s.delivery[i].length < s.delivery[best].length)) best = i;
+    const d = DELIVERY_SPOTS[idx];
+    if (!d) return { ok: false, reason: 'Pose les cartons dans la réserve' };
+    const stack = s.delivery[idx];
+    if (stack.length >= SPOT_STACK) return { ok: false, reason: `Pile pleine (${SPOT_STACK} cartons au plus)` };
+    if (stack.length) return { ok: true };
+    if (this.agents().some((a) => a !== ignore && Math.abs(a.x - d.c) < 0.85 && Math.abs(a.y - d.r) < 0.85)) {
+      return { ok: false, reason: 'Quelqu’un se tient à cet endroit' };
     }
-    if (best >= 0) s.delivery[best].push(carry);
-    else s.pending.push({ product: carry.product, eta: 1, qty: carry.qty });
+    const blocked = new Uint8Array(this.blocked);
+    blocked[d.r * 9 + d.c] = 1;
+    const why = this.layoutProblem(blocked, ignore);
+    if (why) return { ok: false, reason: `Ici, ${why} : laisse un passage` };
+    if (ignore && !DIRS.some(([dr, dc]) => this.walkable(blocked, d.r + dr, d.c + dc))) return { ok: false, reason: 'Ici, tu te retrouverais enfermé' };
+    return { ok: true };
+  }
+
+  walkable(blocked, r, c) {
+    return r >= 0 && c >= 0 && r < 15 && c < 9 && !blocked[r * 9 + c];
+  }
+
+  // Avec cette grille, quelque chose deviendrait-il inaccessible depuis la porte ? (texte du problème ou null)
+  // Vérifié avant de poser un carton, d'acheter ou de déplacer une étagère.
+  layoutProblem(blocked, ignore = null) {
+    const s = this.state;
+    const seen = reachable(blocked, DOOR.r, DOOR.c);
+    const ok = (r, c) => r >= 0 && c >= 0 && r < 15 && c < 9 && seen[r * 9 + c];
+    for (let i = 0; i < DELIVERY_SPOTS.length; i++) {
+      const t = DELIVERY_SPOTS[i];
+      if (!blocked[t.r * 9 + t.c]) continue;
+      if (!DIRS.some(([dr, dc]) => ok(t.r + dr, t.c + dc))) return 'une pile de cartons deviendrait inaccessible';
+    }
+    for (const sh of s.shelves) {
+      const sl = slotById(sh.slot);
+      if (!ok(sl.r + 1, sl.c)) return 'un rayon deviendrait inaccessible';
+    }
+    for (const a of this.agents()) {
+      if (a === ignore) continue;
+      const t = this.tileOf(a);
+      if (!blocked[t.r * 9 + t.c] && !ok(t.r, t.c)) return 'quelqu’un se retrouverait enfermé';
+    }
+    return null;
+  }
+
+  // Case libre voisine d'une pile, la plus proche à pied pour cet agent : { r, c, len } ou null.
+  accessFor(agent, idx) {
+    const d = DELIVERY_SPOTS[idx];
+    const from = this.tileOf(agent);
+    let best = null;
+    for (const [dr, dc] of DIRS) {
+      const r = d.r + dr;
+      const c = d.c + dc;
+      if (r < 0 || c < 0 || r >= 15 || c >= 9) continue;
+      if (this.blocked[r * 9 + c] && !(r === from.r && c === from.c)) continue;
+      const path = findPath(this.blocked, from.r, from.c, r, c);
+      if (!path) continue;
+      if (!best || path.length < best.len) best = { r, c, len: path.length };
+    }
+    return best;
+  }
+
+  // Meilleure case pour un carton qui arrive : avec le même produit si possible (piles par produit, plus
+  // lisibles), sinon une palette vide du fond, sinon la pile la plus basse ; jamais une case invalide.
+  findDropSpot(product, ignore = null) {
+    const s = this.state;
+    const order = [...AUTO_SPOTS, ...DELIVERY_SPOTS.keys()].filter((v, i, a) => a.indexOf(v) === i);
+    const ok = (i) => this.canPlaceAt(i, { ignore }).ok;
+    for (const i of AUTO_SPOTS) {
+      const st = s.delivery[i];
+      if (st.length && st.length < SPOT_STACK && st[st.length - 1].product === product && ok(i)) return i;
+    }
+    for (const i of AUTO_SPOTS) if (!s.delivery[i].length && ok(i)) return i;
+    let best = -1;
+    for (const i of order) {
+      if (s.delivery[i].length < SPOT_STACK && ok(i) && (best < 0 || s.delivery[i].length < s.delivery[best].length)) best = i;
+    }
+    return best;
+  }
+
+  // Prendre un carton (celui du dessus, ou un carton coincé dessous : le magasinier soulève les autres).
+  takeCarton(agent, idx, carton) {
+    const st = this.state.delivery[idx];
+    const k = st.lastIndexOf(carton);
+    if (k < 0) return false;
+    st.splice(k, 1);
+    agent.carry = carton;
+    // Un employé qui venait chercher ce carton change de tâche aussitôt.
+    for (const o of this.staffAgents()) {
+      if (o !== agent && o.task && o.task.carton === carton) this.cancelTask(o, 0.2);
+    }
+    if (!st.length) this.reserveChanged();
+    return true;
+  }
+
+  dropCarton(agent, idx) {
+    if (!agent.carry) return false;
+    const chk = this.canPlaceAt(idx, { ignore: agent });
+    if (!chk.ok) {
+      if (agent.kind === 'player') {
+        this.emit('sfx', { name: 'error' });
+        this.toast(chk.reason);
+      }
+      return false;
+    }
+    const st = this.state.delivery[idx];
+    st.push(agent.carry);
+    agent.carry = null;
+    if (st.length === 1) this.reserveChanged();
+    if (agent.kind === 'player') this.emit('sfx', { name: 'drop' });
+    return true;
   }
 
   // ------------------------------------------------------------- déplacer une étagère (V1.2)
@@ -567,17 +754,25 @@ export class Game {
     if (!this.zoneOwned(to.zone)) return { ok: false, reason: 'Cette allée n’est pas encore ouverte' };
     if (s.shelves.some((x) => x.slot === toId)) return { ok: false, reason: 'Cet emplacement est déjà pris' };
     const from = slotById(fromId);
-    const fillers = [this.player, this.stocker].filter((a) => a && a.fill && a.fill.shelf === shelf);
+    const fillers = [this.player, ...this.staffAgents()].filter((a) => a && a.fill && a.fill.shelf === shelf);
     if (fillers.length) {
-      return { ok: false, reason: fillers[0].kind === 'player' ? 'Tu es en train de remplir ce rayon : attends la fin' : `${this.stocker.name || 'Le magasinier'} remplit ce rayon : réessaie dans un instant` };
+      return { ok: false, reason: fillers[0].kind === 'player' ? 'Tu es en train de remplir ce rayon : attends la fin' : `${fillers[0].name || 'Le magasinier'} remplit ce rayon : réessaie dans un instant` };
     }
     if (this.customers.some((cu) => cu.state === 'browse' && !cu.path.length && this.tileOf(cu).r === from.r + 1 && this.tileOf(cu).c === from.c)) {
       return { ok: false, reason: 'Un client se sert dans ce rayon : réessaie dans un instant' };
     }
-    const agents = [this.player, this.stocker, ...this.customers].filter(Boolean);
+    const agents = this.agents();
     if (agents.some((a) => Math.abs(a.x - to.c) < 0.85 && Math.abs(a.y - to.r) < 0.85)) {
       return { ok: false, reason: 'Quelqu’un passe à cet endroit : réessaie dans un instant' };
     }
+    const test = new Uint8Array(this.blocked);
+    test[from.r * 9 + from.c] = 0;
+    test[to.r * 9 + to.c] = 1;
+    // (le rayon déplacé est vérifié à sa nouvelle place)
+    shelf.slot = toId;
+    const why = this.layoutProblem(test);
+    shelf.slot = fromId;
+    if (why) return { ok: false, reason: `Pas ici : ${why}` };
     return { ok: true, shelf, from, to };
   }
 
@@ -597,12 +792,8 @@ export class Game {
     if (endsAt(p, oldFront) && p.carry) {
       this.moveTo(p, to.r + 1, to.c, () => this.startFill(p, shelf, to));
     }
-    const st = this.stocker;
-    if (st && endsAt(st, oldFront)) {
-      st.path = [];
-      st.onArrive = null;
-      st.busy = false;
-      st.idle = 0;
+    for (const st of this.staffAgents()) {
+      if (endsAt(st, oldFront) || (st.task && st.task.shelf === shelf)) this.cancelTask(st, 0);
     }
     this.repathAll();
     this.emit('sfx', { name: 'build' });
@@ -706,10 +897,11 @@ export class Game {
   }
 
   repathAll() {
-    for (const a of [this.player, this.stocker]) {
+    for (const a of [this.player, ...this.staffAgents()]) {
       if (a && a.path.length) {
         const last = a.path[a.path.length - 1];
-        this.moveTo(a, last.r, last.c, a.onArrive);
+        const ok = this.moveTo(a, last.r, last.c, a.onArrive);
+        if (!ok && a.kind === 'stocker') this.cancelTask(a, 0.3); // plus de chemin : il choisit autre chose
       }
     }
     for (const cu of this.customers) {
@@ -747,6 +939,8 @@ export class Game {
       served: s.stats.served,
       angry: s.stats.angry,
       missing: s.stats.missing,
+      missingBy: { ...(s.stats.missingBy || {}) },
+      cashErrors: s.stats.cashErrors ? { ...s.stats.cashErrors } : null,
       profit: s.stats.revenue - s.stats.spent - charges + goalCoins,
       goals,
       goalCoins,
@@ -898,7 +1092,7 @@ export class Game {
       const candidates = s.shelves.filter((x) => x.product === item.product && x.qty > 0);
       if (!candidates.length) {
         cu.mood -= 0.22;
-        s.stats.missing++;
+        this.countMissing(item.product);
         this.say(cu, '❓');
         this.emit('missing', { product: item.product });
         cu.idx++;
@@ -955,11 +1149,20 @@ export class Game {
     this.addReputation(priceReputation(ratio) * take, 'prix');
     if (take < item.want) {
       cu.mood -= 0.1;
-      s.stats.missing++;
+      this.countMissing(item.product);
     }
     if (ratio < 0.9) cu.mood += 0.05;
     cu.idx++;
     this.nextShelf(cu);
+  }
+
+  // Demande non satisfaite : un client voulait ce produit et ne l'a pas trouvé (rayon absent ou vide), ou pas
+  // en quantité suffisante. Effet : client moins content (−0,22 ou −0,1 d'humeur), donc moins de popularité.
+  countMissing(product) {
+    const st = this.state.stats;
+    st.missing++;
+    if (!st.missingBy || typeof st.missingBy !== 'object') st.missingBy = {};
+    st.missingBy[product] = (st.missingBy[product] || 0) + 1;
   }
 
   tileMatches(cu, shelf) {
@@ -1185,13 +1388,8 @@ export class Game {
         cu.mood += 0.1;
         this.state.stats.perfect = (this.state.stats.perfect || 0) + 1;
       }
-      if (excess < 0 && Math.random() < 0.8) {
-        // Le client remarque qu'on ne lui a pas rendu assez.
-        noticed = true;
-        cu.mood -= 0.7;
-        this.addReputation(-2, 'arnaque');
-        this.say(cu, '😠', 2.5);
-      }
+      // Trop rendu = erreur en faveur du client ; pas assez rendu = en faveur du magasin.
+      noticed = this.cashMistake(cu, co.total, co.paidWith - given, CASH_ERRORS.notice.change, 'player');
       this.completeSale(cu, co.paidWith - given);
     }
     this.emit('sfx', { name: noticed ? 'angry' : 'cash' });
@@ -1225,13 +1423,8 @@ export class Game {
       let noticed = false;
       this.checkout = null;
       if (cu) {
-        if (diff > 0 && Math.random() < 0.7) {
-          // Client facturé trop cher : ça passe, mais s'il le remarque, la réputation en prend un coup.
-          noticed = true;
-          cu.mood -= 0.7;
-          this.addReputation(-2, 'arnaque');
-          this.say(cu, '😠', 2.5);
-        }
+        // Facturé trop = en faveur du magasin (remarqué ou non) ; pas assez = en faveur du client.
+        noticed = this.cashMistake(cu, co.total, value, CASH_ERRORS.notice.card, 'player');
         this.completeSale(cu, value);
       }
       this.emit('sfx', { name: noticed ? 'angry' : 'cash' });
@@ -1243,6 +1436,24 @@ export class Game {
       this.emit('sfx', { name: 'key' });
     }
     return { ok: true };
+  }
+
+  // Erreur de caisse (V1.4) : erreur → détection → réaction, voir cashError / cashDetect / cashReaction.
+  // Renvoie true si le client a remarqué une erreur en sa défaveur.
+  cashMistake(cu, due, paid, chance, who) {
+    const err = cashError(due, paid);
+    if (!err.favor) return false;
+    const noticed = cashDetect(err, chance);
+    const re = cashReaction(err, noticed, who);
+    if (re.rep) this.addReputation(re.rep, re.why);
+    cu.mood += re.mood;
+    if (re.bubble) this.say(cu, re.bubble, 2.5);
+    const st = this.state.stats;
+    st.cashErrors = st.cashErrors || { client: 0, noticed: 0, unnoticed: 0 };
+    if (err.favor === 'client') st.cashErrors.client++;
+    else if (noticed) st.cashErrors.noticed++;
+    else st.cashErrors.unnoticed++;
+    return noticed;
   }
 
   abortCheckout() {
@@ -1265,15 +1476,11 @@ export class Game {
     if (s.pending.length) {
       const arrived = s.pending.filter((d) => d.eta <= 0);
       for (const d of arrived) {
-        // Empiler avec le même produit si possible, sinon sur la pile la plus basse
-        let idx = s.delivery.findIndex((st) => st.length && st.length < SPOT_STACK && st[st.length - 1].product === d.product);
-        if (idx < 0) {
-          let best = -1;
-          for (let i = 0; i < s.delivery.length; i++) if (s.delivery[i].length < SPOT_STACK && (best < 0 || s.delivery[i].length < s.delivery[best].length)) best = i;
-          idx = best;
-        }
-        if (idx < 0) break;
-        s.delivery[idx].push({ product: d.product, qty: d.qty ?? PRODUCT_BY_ID[d.product].qty });
+        const idx = this.findDropSpot(d.product);
+        if (idx < 0) break; // réserve encombrée : le livreur attend qu'une place se libère
+        const st = s.delivery[idx];
+        st.push({ product: d.product, qty: d.qty ?? PRODUCT_BY_ID[d.product].qty });
+        if (st.length === 1) this.reserveChanged();
         s.pending.splice(s.pending.indexOf(d), 1);
         this.emit('delivery', {});
       }
@@ -1299,7 +1506,7 @@ export class Game {
     // Déplacements
     this.moveAgent(this.player, dt);
     if (this.player.fill) this.stepFill(this.player, dt, 0.075);
-    if (this.stocker) this.updateStocker(dt);
+    for (const a of this.staffAgents()) this.updateStocker(a, dt);
     for (const cu of this.customers) this.updateCustomer(cu, dt);
     this.customers = this.customers.filter((c) => !c.gone);
 
@@ -1395,17 +1602,13 @@ export class Game {
         const total = cu.basket.reduce((n, it) => n + it.price, 0);
         let received = total;
         if (Math.random() < lv.error) {
-          // Erreur de caisse : un article compté deux fois (le client paie trop) ou oublié (on perd la vente).
+          // Erreur de caisse : un article compté deux fois (le client paie trop) ou oublié (il paie moins).
           const it = cu.basket[Math.floor(Math.random() * cu.basket.length)];
           const over = Math.random() < 0.5;
           received = over ? total + it.price : total - it.price;
           this.state.stats.staffErrors = (this.state.stats.staffErrors || 0) + 1;
-          if (over && Math.random() < 0.7) {
-            cu.mood -= 0.6;
-            this.addReputation(-1.5, 'personnel');
-            this.say(cu, '😠', 2.5);
-          }
-          this.emit('staffError', { name: cashier.name, over, amount: it.price });
+          const noticed = this.cashMistake(cu, total, received, CASH_ERRORS.notice.cashier, 'cashier');
+          this.emit('staffError', { name: cashier.name, over, amount: it.price, noticed });
         }
         this.completeSale(cu, received);
         this.emit('sfx', { name: 'cashSoft' });
@@ -1420,71 +1623,188 @@ export class Game {
     }
   }
 
-  updateStocker(dt) {
-    const a = this.stocker;
+  // ------------------------------------------------------------- magasinier (V1.4)
+  // Règles, identiques à tous les niveaux :
+  //  - un produit va dans SON rayon (même produit), ou dans une étagère neuve sans produit si ce produit n'a
+  //    encore aucun rayon ; jamais dans le rayon d'un autre produit, même vide ;
+  //  - il ne prend un carton que s'il a déjà un rayon compatible où le vider ;
+  //  - il va de lui-même remplir les rayons vides ou presque vides ; un rayon vide passe en premier ;
+  //  - un carton coincé sous d'autres est sorti quand même (un peu plus long) ;
+  //  - chaque carton et chaque rayon visés sont réservés : deux employés ne font jamais la même tâche ;
+  //  - rien à faire : il attend près de la réserve (pas d'aller-retour sans fin).
+  // Les étoiles jouent seulement sur la vitesse et l'initiative (seuil de remplissage, temps de réflexion).
+  staffAgents() {
+    return [this.stocker, ...(this.helpers || [])].filter(Boolean);
+  }
+
+  stockerLevel(a) {
+    return STOCKER_LEVELS[Math.max(1, Math.min(5, a.level || 1)) - 1];
+  }
+
+  // Ce rayon peut-il recevoir ce produit des mains d'un employé ?
+  staffMayFill(shelf, product) {
+    if (shelf.product) return shelf.product === product;
+    return !this.state.shelves.some((x) => x.product === product);
+  }
+
+  // Ce que les AUTRES employés ont réservé.
+  claimsExcept(agent) {
+    const cartons = new Set();
+    const shelves = new Set();
+    for (const o of this.staffAgents()) {
+      if (o === agent || !o.task) continue;
+      if (o.task.carton) cartons.add(o.task.carton);
+      if (o.task.shelf) shelves.add(o.task.shelf);
+    }
+    return { cartons, shelves };
+  }
+
+  // Rayon où un employé peut vider ce carton (le moins rempli d'abord), ou null.
+  shelfFor(product, agent = null) {
     const s = this.state;
+    const { shelves } = this.claimsExcept(agent);
+    const ok = s.shelves.filter((x) => x.qty < SHELF_CAPACITY && !shelves.has(x) && this.staffMayFill(x, product));
+    if (!ok.length) return null;
+    return ok.sort((a, b) => (a.product ? 0 : 1) - (b.product ? 0 : 1) || a.qty - b.qty)[0];
+  }
+
+  // Le rayon a-t-il besoin de ce magasinier ? Vide : toujours ; sinon sous le seuil de son niveau.
+  shelfNeedsStock(shelf, lv) {
+    return shelf.qty === 0 || shelf.qty <= SHELF_CAPACITY * lv.refill;
+  }
+
+  // Choisit la prochaine tâche : { shelf, product, carton, idx, above } ou null.
+  chooseTask(a) {
+    const s = this.state;
+    const lv = this.stockerLevel(a);
+    const { cartons, shelves } = this.claimsExcept(a);
+    const here = this.tileOf(a);
+    // Cartons disponibles par produit, avec un coût (cartons à soulever, distance, carton entamé d'abord)
+    const offers = new Map();
+    s.delivery.forEach((st, idx) => {
+      st.forEach((carton, k) => {
+        if (cartons.has(carton)) return;
+        const d = DELIVERY_SPOTS[idx];
+        const above = st.length - 1 - k;
+        const cost = above * 3 + Math.abs(d.r - here.r) + Math.abs(d.c - here.c) * 0.5 + (carton.qty < PRODUCT_BY_ID[carton.product].qty ? -0.5 : 0);
+        const list = offers.get(carton.product) || [];
+        list.push({ carton, idx, above, cost });
+        offers.set(carton.product, list);
+      });
+    });
+    if (!offers.size) return null;
+    const needs = s.shelves.filter((x) => !shelves.has(x) && x.qty < SHELF_CAPACITY && this.shelfNeedsStock(x, lv));
+    // Rayon vide d'abord, puis le moins rempli.
+    needs.sort((x, y) => (x.qty === 0 ? 0 : 1) - (y.qty === 0 ? 0 : 1) || x.qty - y.qty || (x.product ? 0 : 1) - (y.product ? 0 : 1));
+    for (const shelf of needs) {
+      // Étagère sans produit : seulement pour un produit qui n'a encore aucun rayon.
+      const products = shelf.product ? [shelf.product] : [...offers.keys()].filter((p) => !s.shelves.some((x) => x.product === p));
+      for (const p of products) {
+        const list = (offers.get(p) || []).slice().sort((x, y) => x.cost - y.cost);
+        for (const o of list) {
+          if (!this.accessFor(a, o.idx)) continue; // pile entourée : on essaie un autre carton
+          return { shelf, product: p, carton: o.carton, idx: o.idx, above: o.above };
+        }
+      }
+    }
+    return null;
+  }
+
+  cancelTask(a, idle = 0.5) {
+    a.path = [];
+    a.onArrive = null;
+    a.busy = false;
+    a.task = null;
+    a.dig = null;
+    a.idle = idle;
+  }
+
+  updateStocker(a, dt) {
+    const s = this.state;
+    const lv = this.stockerLevel(a);
     this.moveAgent(a, dt);
     if (a.fill) {
-      this.stepFill(a, dt, a.perUnit || 0.28);
-      if (!a.fill) a.busy = false;
+      this.stepFill(a, dt, a.perUnit || lv.perUnit);
+      if (!a.fill) {
+        a.busy = false;
+        a.task = null;
+        a.idle = lv.think * 0.4;
+      }
+      return;
+    }
+    if (a.dig) {
+      // Sortir un carton coincé sous d'autres (il soulève ceux du dessus)
+      a.dig.t -= dt;
+      if (a.dig.t > 0) return;
+      const { carton, idx } = a.dig;
+      a.dig = null;
+      a.busy = false;
+      if (!s.delivery[idx].includes(carton) || a.carry) return this.cancelTask(a, lv.think);
+      this.takeCarton(a, idx, carton);
+      a.idle = 0.1;
       return;
     }
     if (a.path.length || a.busy) return;
     a.idle -= dt;
     if (a.idle > 0) return;
+
     if (a.carry) {
-      // Trouver un rayon pour le carton en main, sinon le reposer.
-      const shelf = this.shelfFor(a.carry.product);
+      // Un carton en main : vers son rayon, sinon retour à la réserve.
+      const shelf = this.shelfFor(a.carry.product, a);
       if (shelf) {
         const sl = slotById(shelf.slot);
+        a.task = { shelf };
         a.busy = true;
-        this.moveTo(a, sl.r + 1, sl.c, () => {
-          this.startFill(a, shelf, sl);
-          if (!a.fill) a.busy = false;
-        });
-      } else {
-        const idx = s.delivery.findIndex((st) => st.length < SPOT_STACK);
-        if (idx >= 0) {
-          a.busy = true;
-          this.moveTo(a, 2, idx, () => {
-            s.delivery[idx].push(a.carry);
-            a.carry = null;
-            a.busy = false;
-            a.idle = 1;
-          });
-        }
-      }
-      return;
-    }
-    // Chercher un carton utile dans la réserve
-    for (let i = 0; i < s.delivery.length; i++) {
-      const st = s.delivery[i];
-      if (!st.length) continue;
-      const top = st[st.length - 1];
-      if (this.shelfFor(top.product)) {
-        a.busy = true;
-        this.moveTo(a, 2, i, () => {
+        const ok = this.moveTo(a, sl.r + 1, sl.c, () => {
           a.busy = false;
-          if (!st.length || a.carry) return;
-          const t = st[st.length - 1];
-          if (!this.shelfFor(t.product)) return;
-          a.carry = st.pop();
+          const cur = s.shelves.includes(shelf) ? slotById(shelf.slot) : null;
+          const t = this.tileOf(a);
+          if (!cur || t.r !== cur.r + 1 || t.c !== cur.c) return this.cancelTask(a, 0.2); // étagère déplacée
+          this.startFill(a, shelf, cur);
+          if (!a.fill) this.cancelTask(a, lv.think);
         });
+        if (!ok) this.cancelTask(a, lv.think);
         return;
       }
+      const idx = this.findDropSpot(a.carry.product, a);
+      const acc = idx >= 0 ? this.accessFor(a, idx) : null;
+      if (!acc) return this.cancelTask(a, lv.think + 1);
+      a.task = { drop: idx };
+      a.busy = true;
+      const ok = this.moveTo(a, acc.r, acc.c, () => {
+        a.busy = false;
+        a.task = null;
+        a.idle = this.dropCarton(a, idx) ? lv.think * 0.5 : lv.think;
+      });
+      if (!ok) this.cancelTask(a, lv.think);
+      return;
     }
-    a.idle = 1.2;
-    const t = this.tileOf(a);
-    if (t.r !== 2 || t.c !== 8) this.moveTo(a, 2, 8);
-  }
 
-  // Rayon qui peut recevoir ce produit (déjà ce produit avec de la place, sinon un rayon vide).
-  shelfFor(product) {
-    const s = this.state;
-    const same = s.shelves.filter((x) => x.product === product && x.qty < SHELF_CAPACITY);
-    if (same.length) return same.sort((a, b) => a.qty - b.qty)[0];
-    if (s.shelves.some((x) => x.product === product && x.qty > 0)) return null;
-    return s.shelves.find((x) => !x.product || x.qty === 0 && !this.productWanted(x.product)) || null;
+    const task = this.chooseTask(a);
+    if (!task) {
+      // Rien d'utile : il patiente près de la réserve.
+      a.idle = lv.think + 0.6;
+      const t = this.tileOf(a);
+      if ((t.r !== STOCKER_HOME.r || t.c !== STOCKER_HOME.c) && !this.blocked[STOCKER_HOME.r * 9 + STOCKER_HOME.c]) this.moveTo(a, STOCKER_HOME.r, STOCKER_HOME.c);
+      return;
+    }
+    a.task = task;
+    a.busy = true;
+    const acc = this.accessFor(a, task.idx);
+    const ok = acc && this.moveTo(a, acc.r, acc.c, () => {
+      const st = s.delivery[task.idx];
+      const k = st.indexOf(task.carton);
+      if (k < 0 || a.carry || a.task !== task) return this.cancelTask(a, lv.think * 0.5); // carton pris ou déplacé
+      const above = st.length - 1 - k;
+      if (above > 0) {
+        a.dig = { t: lv.dig * above, carton: task.carton, idx: task.idx };
+        return;
+      }
+      a.busy = false;
+      this.takeCarton(a, task.idx, task.carton);
+      a.idle = 0.1;
+    });
+    if (!ok) this.cancelTask(a, lv.think);
   }
 
   productWanted(product) {

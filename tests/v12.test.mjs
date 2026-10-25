@@ -6,21 +6,22 @@ import { SHELF_SLOTS, DOOR, EVENTS, EVENT_BY_ID, customersPerDay, SAVE_KEY } fro
 import { findPath } from '../src/layout.js';
 import { playBot } from '../scripts/bot.mjs';
 
+const A = SHELF_SLOTS.find((s) => s.id === 'A1').r; // ligne de l'allée 1 (4 depuis la V1.4)
 const front = (id) => { const sl = SHELF_SLOTS.find((s) => s.id === id); return { r: sl.r + 1, c: sl.c }; };
 
 test('déplacer une étagère : produit et quantité suivent, gratuit, grille mise à jour', () => {
   const g = new Game();
   g.state.shelves[0] = { slot: 'A3', product: 'eau', qty: 11 };
   const coins = g.state.coins;
-  assert.ok(g.blocked[3 * 9 + 3]);
+  assert.ok(g.blocked[A * 9 + 3]);
   const r = g.moveShelf('A3', 'A1');
   assert.ok(r.ok, r.reason);
   const sh = g.state.shelves.find((x) => x.slot === 'A1');
   assert.deepEqual({ p: sh.product, q: sh.qty }, { p: 'eau', q: 11 });
   assert.ok(!g.state.shelves.some((x) => x.slot === 'A3'));
   assert.equal(g.state.coins, coins, 'gratuit');
-  assert.equal(g.blocked[3 * 9 + 3], 0, 'ancien emplacement libéré');
-  assert.equal(g.blocked[3 * 9 + 1], 1, 'nouvel emplacement bloqué');
+  assert.equal(g.blocked[A * 9 + 3], 0, 'ancien emplacement libéré');
+  assert.equal(g.blocked[A * 9 + 1], 1, 'nouvel emplacement bloqué');
 });
 
 test('déplacer une étagère : les refus (pris, allée fermée, même place, inconnue)', () => {
@@ -54,7 +55,7 @@ test('déplacer une étagère : interdit pendant qu’on la remplit ou qu’un c
   assert.equal(r.ok, false);
   assert.match(r.reason, /client/);
   // quelqu'un debout sur l'emplacement visé
-  cu.state = 'shop'; cu.x = 1; cu.y = 3;
+  cu.state = 'shop'; cu.x = 1; cu.y = A;
   r = g.moveShelf('A3', 'A1');
   assert.equal(r.ok, false);
   assert.match(r.reason, /passe/);
@@ -104,14 +105,14 @@ test('déplacer une étagère au doigt : mode Déplacer (étagère puis « + »)
   g.startMove();
   const tiles = g.actionTiles();
   assert.ok(tiles.every((t) => SHELF_SLOTS.some((s) => s.r === t.r && s.c === t.c)), 'seulement étagères et « + »');
-  assert.ok(g.tap(1, 7).toast, 'l’ordinateur ne réagit pas en mode Déplacer');
-  assert.equal(g.tap(3, 4).moveFrom, 'A4');
-  assert.equal(g.tap(3, 7).moveDone, 'A7');
+  assert.ok(g.tap(1, 7).toast, 'la réserve ne réagit pas en mode Déplacer');
+  assert.equal(g.tap(A, 4).moveFrom, 'A4');
+  assert.equal(g.tap(A, 7).moveDone, 'A7');
   assert.equal(g.moving, null);
   assert.ok(g.state.shelves.some((x) => x.slot === 'A7'));
   // depuis la fiche : départ déjà choisi ; retoucher l'étagère annule
   g.startMove('A3');
-  assert.ok(g.tap(3, 3).moveCancelled);
+  assert.ok(g.tap(A, 3).moveCancelled);
   assert.equal(g.moving, null);
 });
 
@@ -221,8 +222,8 @@ test('relecture : objectif « monnaie juste » jamais tiré si toutes les caisse
 test('relecture : déplacement refusé si quelqu’un est à cheval sur l’emplacement visé', () => {
   const g = new Game();
   g.state.shelves[0] = { slot: 'A3', product: 'eau', qty: 4 };
-  g.player.x = 1; g.player.y = 3.6; // entre la ligne 3 (emplacement A1) et la ligne 4
+  g.player.x = 1; g.player.y = A + 0.6; // entre la ligne de l'emplacement A1 et la suivante
   assert.match(g.moveShelf('A3', 'A1').reason, /passe/);
-  g.player.y = 4.4;
+  g.player.y = A + 1.4;
   assert.ok(g.moveShelf('A3', 'A1').ok);
 });

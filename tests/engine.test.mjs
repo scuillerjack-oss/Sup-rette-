@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Game, newState, serialize, deserialize, cents } from '../src/game.js';
-import { SHELF_SLOTS, REGISTERS, DELIVERY_SPOTS, COMPUTER, DOOR, ZONES } from '../src/data.js';
+import { SHELF_SLOTS, REGISTERS, DELIVERY_SPOTS, DOOR, ZONES } from '../src/data.js';
 import { buildBlocked, findPath } from '../src/layout.js';
 import { playBot } from '../scripts/bot.mjs';
 
@@ -13,8 +13,7 @@ test('magasin complet : chaque accès reste atteignable depuis la porte', () => 
   const blocked = buildBlocked(s);
   const targets = [
     ...SHELF_SLOTS.map((sl) => ({ r: sl.r + 1, c: sl.c })),
-    ...DELIVERY_SPOTS.map((d) => ({ r: 2, c: d.c })),
-    COMPUTER.access,
+    ...DELIVERY_SPOTS.map((d) => ({ r: d.r, c: d.c })),
     ...REGISTERS.flatMap((r) => [r.staff, r.pay, ...r.queue])
   ];
   for (const t of targets) assert.ok(findPath(blocked, DOOR.r, DOOR.c, t.r, t.c), `case ${t.r},${t.c} inaccessible`);
@@ -95,11 +94,11 @@ test('carte : client facturé trop = recette encaissée, prix minimum respecté'
 import { nearestTarget, isTap, TAP_MOVE } from '../src/tap.js';
 import { customersPerDay } from '../src/data.js';
 
-test('toucher : un doigt à côté du « + » ou de l’ordinateur vise quand même la bonne case', () => {
+test('toucher : un doigt à côté du « + » vise quand même la bonne case', () => {
   const g = new Game();
   const tiles = g.actionTiles();
-  // l'ordinateur et les emplacements libres de l'allée 1 font partie des cibles
-  assert.ok(tiles.some((t) => t.r === COMPUTER.tiles[0].r && t.c === COMPUTER.tiles[0].c));
+  // toute la réserve et les emplacements libres de l'allée 1 font partie des cibles (V1.4 : plus d'ordinateur)
+  assert.ok(DELIVERY_SPOTS.every((d) => tiles.some((t) => t.r === d.r && t.c === d.c)));
   const free = SHELF_SLOTS.find((sl) => sl.zone === 'A' && !g.state.shelves.some((x) => x.slot === sl.id));
   assert.ok(g.isActionTile(free.r, free.c), 'le « + » libre doit être touchable');
   // grille fictive : 40 px par case
@@ -110,8 +109,6 @@ test('toucher : un doigt à côté du « + » ou de l’ordinateur vise quand m�
   assert.equal(nearestTarget(cands, 2000, 2000), null, 'trop loin : rien');
   // toucher du « + » → fiche « Nouvelle étagère »
   assert.equal(g.tap(free.r, free.c).open, 'buyShelf');
-  // toucher de l'ordinateur → commande
-  assert.equal(g.tap(COMPUTER.tiles[0].r, COMPUTER.tiles[0].c).open, 'order');
 });
 
 test('toucher : geste annulé par le téléphone compté s’il était court et immobile', () => {
