@@ -136,7 +136,10 @@ d'abord simulé en ligne/hors ligne, tamponnage du build, versionCode, workflow,
 gardés + stockage plein, confirmation, zones protégées, purge Android). Chrome mobile simulé (393×851) : nouvelle
 partie (Annuler garde la partie, Oui repart au jour 1, relance = jour 1, réglages gardés), en-tête et barre du bas
 avec zones protégées simulées, passage d'une publication à la suivante (bandeau puis mise à jour, partie gardée),
-et passage depuis l'ancien service worker V1.0.
+et passage depuis l'ancien service worker V1.0 (V1.0 encore au 1er lancement, V1.3 dès le 2e). Relecture
+indépendante : aucun point bloquant ; corrigé : anti-boucle de rechargement renforcé, version.txt jamais mis en
+cache, délai de 6 s avant de passer au cache sur un réseau qui accroche, Java sans dépendance androidx,
+confirmation « Nouvelle partie » ouverte en priorité.
 
 **Ce qui reste manuel pour Jack (une seule fois)**
 1. Après la fusion, attendre ~5 min que la CI publie (onglet Actions vert).

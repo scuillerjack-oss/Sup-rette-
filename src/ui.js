@@ -524,7 +524,9 @@ export class UI {
       case 'reset':
         // V1.3 : confirmation dans une fenêtre claire avant d'effacer (voir onModalClick).
         this.close();
-        this.queueModal({ kind: 'reset' });
+        // Ouverte tout de suite, même si une autre fenêtre attendait (elle reviendra après « Annuler »).
+        this.modals = [{ kind: 'reset' }, ...(this.modalOpen ? [this.modalOpen] : []), ...(this.modals || [])];
+        this.nextModal();
         return;
       case 'update': return this.hooks.update();
       default: break;

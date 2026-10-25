@@ -144,12 +144,19 @@ async function checkForUpdate(ui, save, atLaunch) {
   const latest = await fetchLatestVersion();
   let tried = null;
   try { tried = sessionStorage.getItem(UPDATE_TRIED_KEY); } catch (e) { /* rien */ }
-  const action = updateAction(latest, BUILD_VERSION, { atLaunch, triedVersion: tried });
+  let action = updateAction(latest, BUILD_VERSION, { atLaunch, triedVersion: tried });
   if (action === 'reload') {
-    try { sessionStorage.setItem(UPDATE_TRIED_KEY, latest); } catch (e) { /* rien */ }
-    save();
-    location.reload();
-  } else if (action === 'banner') {
+    // Garde-fou anti-boucle : on ne recharge que si la tentative a bien pu être notée.
+    let noted = false;
+    try { sessionStorage.setItem(UPDATE_TRIED_KEY, latest); noted = sessionStorage.getItem(UPDATE_TRIED_KEY) === latest; } catch (e) { noted = false; }
+    if (noted) {
+      save();
+      location.reload();
+      return;
+    }
+    action = 'banner';
+  }
+  if (action === 'banner') {
     ui.showUpdate(latest);
   }
 }

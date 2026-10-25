@@ -41,6 +41,15 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Réseau qui « accroche » sans couper (Wi-Fi d'hôtel…) : au-delà de quelques secondes, on passe au cache.
+function fetchWithTimeout(request, ms) {
+  if (!ms) return fetch(request);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('délai dépassé')), ms);
+    fetch(request).then((r) => { clearTimeout(timer); resolve(r); }, (e) => { clearTimeout(timer); reject(e); });
+  });
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -55,9 +64,10 @@ self.addEventListener('fetch', (event) => {
       // Page et version.txt : cache: 'no-store' = toujours la copie du serveur, jamais celle du cache HTTP
       // du téléphone (GitHub Pages autorise 10 min de cache) ; pas de requête conditionnelle « 304 » non plus,
       // plus sûr dans l'APK où Capacitor relaie lui-même les pages HTML.
-      const fresh = isPage || url.pathname.endsWith('version.txt');
-      const res = await fetch(fresh ? new Request(req.url, { cache: 'no-store', credentials: 'same-origin' }) : req);
-      if (res && res.ok && res.type === 'basic') {
+      const isVersion = url.pathname.endsWith('version.txt');
+      const res = await fetchWithTimeout(isPage || isVersion ? new Request(req.url, { cache: 'no-store', credentials: 'same-origin' }) : req, isPage ? 6000 : 0);
+      // version.txt n'est jamais gardé (une copie par vérification remplirait le cache pour rien).
+      if (res && res.ok && res.type === 'basic' && !res.redirected && !isVersion) {
         const copy = res.clone();
         event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(key, copy)).catch(() => {}));
       }

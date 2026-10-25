@@ -1,8 +1,9 @@
 package com.scuillerjackoss.superette;
 
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
+import android.os.Build;
 import android.os.Bundle;
-import androidx.core.content.pm.PackageInfoCompat;
 import com.getcapacitor.BridgeActivity;
 import java.io.File;
 
@@ -20,7 +21,8 @@ public class MainActivity extends BridgeActivity {
 
     private void purgeServiceWorkerAfterUpdate() {
         try {
-            long code = PackageInfoCompat.getLongVersionCode(getPackageManager().getPackageInfo(getPackageName(), 0));
+            PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+            long code = Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
             SharedPreferences prefs = getSharedPreferences("superette_maj", MODE_PRIVATE);
             if (prefs.getLong("versionCode", -1L) == code) return;
             String data = getApplicationInfo().dataDir;

@@ -113,6 +113,11 @@ test('service worker : en ligne la nouvelle page, hors ligne la copie en cache',
   assert.equal((await nav()).body, 'V1.4', 'nouvelle version dès le lancement suivant');
   online = false;
   assert.equal((await nav()).body, 'V1.4', 'hors ligne : dernière version gardée');
+  online = true;
+  let pv; const w = [];
+  handlers.fetch({ request: { method: 'GET', url: 'https://x.io/Sup-rette-/version.txt?t=1', mode: 'cors' }, respondWith: (x) => { pv = x; }, waitUntil: (x) => w.push(x) });
+  await pv; await Promise.all(w);
+  assert.ok(![...store.keys()].some((k) => k.includes('version.txt')), 'version.txt jamais mis en cache');
 });
 
 test('APK : versionCode toujours croissant, y compris en passant de 1.2 à 1.3', () => {
@@ -181,12 +186,13 @@ test('nouvelle partie : stockage plein ou bloqué → la sauvegarde est au moins
 
 test('nouvelle partie : le menu demande une confirmation, puis appelle le vrai effacement', () => {
   const ui = read('src/ui.js');
-  assert.match(ui, /queueModal\(\{ kind: 'reset' \}\)/);
+  assert.match(ui, /this\.modals = \[\{ kind: 'reset' \}/, 'ouverte en priorité');
   assert.match(ui, /data-a="resetYes"/);
   assert.match(ui, /data-a="cancel"/);
   assert.match(ui, /resetYes'\) \{[\s\S]*?this\.hooks\.reset\(\)/);
   const main = read('src/main.js');
   assert.match(main, /reset: \(\) => \{\s*saver\.reset\(\);\s*location\.reload\(\);/);
+  assert.match(main, /if \(noted\) \{/, 'pas de rechargement si la tentative ne peut pas être notée (anti-boucle)');
   assert.doesNotMatch(main, /localStorage\.setItem\(SAVE_KEY/, 'toutes les sauvegardes passent par le saver verrouillable');
 });
 
