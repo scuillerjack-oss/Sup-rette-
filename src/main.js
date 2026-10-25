@@ -1,5 +1,5 @@
 // Démarrage : sauvegarde, boucle d'animation, toucher.
-import { SAVE_KEY, SETTINGS_KEY } from './data.js';
+import { SETTINGS_KEY } from './data.js';
 import { Game, newState, serialize, deserialize } from './game.js';
 import { Renderer } from './render.js';
 import { Renderer3D, webglAvailable } from './render3d.js';
@@ -8,15 +8,14 @@ import { resolveTap, isTap, TAP_RADIUS_MOVE } from './tap.js';
 import { settings, unlockAudio } from './audio.js';
 import { createSaver } from './storage.js';
 import { BUILD_VERSION, UPDATE_TRIED_KEY, fetchLatestVersion, updateAction } from './update.js';
+import { sessionPlan, startTutorial, leaveTutorial, skipTutorial, savedTutoStep } from './tutorial.js';
+import { TutoUI } from './tutoui.js';
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    return raw ? deserialize(raw) : null;
-  } catch (e) {
-    return null;
-  }
+// Stockage du navigateur, ou un stockage vide si le téléphone le refuse (la partie continue sans sauvegarde).
+function getStore() {
+  try { return window.localStorage || null; } catch (e) { return null; }
 }
+const NO_STORE = { getItem() { return null; }, setItem() {}, removeItem() {} };
 
 function start(hotData) {
   try {
@@ -25,7 +24,10 @@ function start(hotData) {
     if (typeof st.haptics === 'boolean') settings.haptics = st.haptics;
   } catch (e) { /* réglages par défaut */ }
 
-  const initial = (hotData && hotData.state && deserialize(hotData.state)) || loadState() || newState();
+  // V1.5 : partie normale (clé SAVE_KEY) ou partie d'essai du tutoriel (sa propre clé), voir src/tutorial.js.
+  const store = getStore() || NO_STORE;
+  const plan = sessionPlan(store);
+  const initial = (hotData && hotData.state && deserialize(hotData.state)) || plan.state || newState();
   const game = new Game(initial);
   const canvas = document.getElementById('cv');
   let renderer;
@@ -45,9 +47,7 @@ function start(hotData) {
     renderer = new Renderer(cv, game);
   }
 
-  let store = null;
-  try { store = window.localStorage; } catch (e) { store = null; }
-  const saver = createSaver(store || { setItem() {}, removeItem() {} }, SAVE_KEY, () => game.state, { fresh: newState, serializeFn: serialize });
+  const saver = createSaver(store, plan.key, () => game.state, { fresh: plan.fresh, serializeFn: serialize });
   const save = () => saver.save();
   const ui = new UI(game, renderer, {
     save,
@@ -59,8 +59,33 @@ function start(hotData) {
       saver.reset();
       location.reload();
     },
-    update: () => { save(); location.reload(); }
+    update: () => { save(); location.reload(); },
+    // V1.5 : tutoriel. La partie normale est sauvegardée (si elle existe) puis plus jamais écrite jusqu'au
+    // rechargement ; la partie d'essai a sa propre clé.
+    tutoMode: plan.mode === 'tuto',
+    tutoStep: () => savedTutoStep(store),
+    startTutorial: (fresh = true) => {
+      // Depuis le tutoriel : « Recommencer le tutoriel » (la partie normale n'est pas concernée).
+      if (plan.mode === 'tuto') { saver.lock(); startTutorial(store, null, { fresh: true }); }
+      else startTutorial(store, saver, { fresh });
+      location.reload();
+    },
+    leaveTutorial: ({ finished = false } = {}) => {
+      leaveTutorial(store, saver, { finished });
+      location.reload();
+    },
+    skipTutorial: () => skipTutorial(store)
   });
+  let tuto = null;
+  if (plan.mode === 'tuto') {
+    tuto = new TutoUI(game, renderer, ui, { save, leaveTutorial: (o) => ui.hooks.leaveTutorial(o) });
+    ui.tuto = tuto;
+    document.body.classList.add('tuto');
+  } else if (plan.offer) ui.offerTutorial();
+  else if (plan.announce) {
+    skipTutorial(store);
+    setTimeout(() => ui.toast('Nouveau : un tutoriel dans le menu ☰ (ta partie est gardée)'), 1500);
+  }
   checkForUpdate(ui, save, true);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) checkForUpdate(ui, save, false);
@@ -125,6 +150,10 @@ function start(hotData) {
       game.update(dt);
       renderer.draw(dt);
       ui.frame();
+      if (tuto) {
+        // Une erreur du tutoriel ne doit jamais figer le jeu.
+        try { tuto.frame(dt); } catch (e) { if (!tuto.failed) { tuto.failed = true; console.warn('tutoriel', e); } }
+      }
     }
     requestAnimationFrame(frame);
   }

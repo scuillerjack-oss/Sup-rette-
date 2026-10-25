@@ -763,7 +763,7 @@ export class Renderer3D {
       if (!obj) continue;
       const p = sh.product ? PRODUCT_BY_ID[sh.product] : null;
       if (this.headers && obj.hi != null) {
-        this.headers.setColorAt(obj.hi, col.set(p ? p.color : '#9aa7b0'));
+        this.headers.setColorAt(obj.hi, col.set(p ? p.tag : '#9aa7b0')); // V1.5 : couleur du code carton
         this.headers.instanceColor.needsUpdate = true;
       }
       if (!p || !sh.qty) continue;
@@ -788,8 +788,9 @@ export class Renderer3D {
   }
 
   // ---------------------------------------------------------------- cartons de la réserve
-  // V1.4 : le NOM du produit est écrit en gros sur la face avant ET sur le dessus du carton (le dessus est la
-  // face la plus visible avec la caméra en plongée), avec l'icône et la couleur du produit.
+  // V1.5 (retour de Jack) : plus de nom écrit sur le carton, il le cachait. Un CODE COULEUR par produit
+  // (p.tag) : bande de couleur en travers du dessus (comme un adhésif) et étiquette de couleur sur la face avant,
+  // avec la petite icône du produit (aide pour les daltoniens). Le carton reste un carton kraft bien visible.
   cartonMat(pid, face) {
     const k = `carton:${pid}:${face}`;
     let m = this.mats.get(k);
@@ -799,20 +800,25 @@ export class Renderer3D {
         c.fillStyle = face === 'top' ? '#d9b07c' : '#c99a62'; c.fillRect(0, 0, w, h);
         c.fillStyle = 'rgba(120,80,40,0.22)';
         for (let i = 0; i < 6; i++) c.fillRect(0, 8 + i * 26, w, 2);
-        const pad = 10;
-        c.fillStyle = '#ffffff'; rr2(c, pad, pad, w - pad * 2, h - pad * 2, 16); c.fill();
-        c.fillStyle = p.color; rr2(c, pad, pad, 16, h - pad * 2, 8); c.fill();
-        c.fillStyle = p.color; c.fillRect(pad + 8, pad, 8, h - pad * 2);
-        const ic = Math.min(h - pad * 2 - 8, 76);
-        c.drawImage(this.iconCanvas(p, 128), pad + 20, (h - ic) / 2, ic, ic);
-        // nom : le plus gros possible dans la place restante
-        const x0 = pad + 26 + ic;
-        const maxW = w - x0 - pad - 6;
-        let fs = 64;
-        c.font = `800 ${fs}px ${FONT3}`;
-        while (fs > 26 && c.measureText(p.short).width > maxW) { fs -= 2; c.font = `800 ${fs}px ${FONT3}`; }
-        c.fillStyle = '#1d2b30'; c.textAlign = 'center'; c.textBaseline = 'middle';
-        c.fillText(p.short, x0 + maxW / 2, h / 2 + 3);
+        const edge = luminance(p.tag) > 0.8 ? '#5b6670' : 'rgba(255,255,255,0.85)';
+        if (face === 'top') {
+          // bande d'adhésif de la couleur du produit, sur toute la largeur
+          const bh = h * 0.42;
+          c.fillStyle = p.tag; c.fillRect(0, (h - bh) / 2, w, bh);
+          c.fillStyle = edge; c.fillRect(0, (h - bh) / 2, w, 4); c.fillRect(0, (h + bh) / 2 - 4, w, 4);
+          const r = bh * 0.36;
+          c.fillStyle = '#ffffff'; c.beginPath(); c.arc(w / 2, h / 2, r + 4, 0, Math.PI * 2); c.fill();
+          c.drawImage(this.iconCanvas(p, 128), w / 2 - r, h / 2 - r, r * 2, r * 2);
+        } else {
+          // étiquette de couleur au centre de la face avant
+          const lw = w * 0.56, lh = h * 0.66;
+          const x = (w - lw) / 2, y = (h - lh) / 2;
+          c.fillStyle = p.tag; rr2(c, x, y, lw, lh, 14); c.fill();
+          c.lineWidth = 5; c.strokeStyle = edge; c.stroke();
+          const r = lh * 0.3;
+          c.fillStyle = '#ffffff'; c.beginPath(); c.arc(w / 2, h / 2, r + 4, 0, Math.PI * 2); c.fill();
+          c.drawImage(this.iconCanvas(p, 128), w / 2 - r, h / 2 - r, r * 2, r * 2);
+        }
       });
       tex.anisotropy = 8;
       m = new this.T3.MeshStandardMaterial({ map: tex, roughness: 0.85 });
@@ -1397,30 +1403,27 @@ export class Renderer3D {
     this.ripples = this.ripples.filter((r) => r.t < 0.45);
   }
 
-  // Panneau du fronton : nom court du produit sur sa couleur (« libre » pour une étagère sans produit).
+  // Panneau du fronton : nom court du produit sur la couleur de son code carton (V1.5), « libre » sinon.
   shelfSign(ctx, x, y, p, unit) {
     const label = p ? p.short : 'libre';
     const fsz = Math.max(10, Math.round(unit * 0.25));
     ctx.font = `800 ${fsz}px ${FONT3}`;
     const tw = Math.min(unit * 0.98, ctx.measureText(label).width + 10);
     const th = fsz + 5;
-    ctx.fillStyle = p ? p.color : 'rgba(154,167,176,0.95)';
+    ctx.fillStyle = p ? p.tag : 'rgba(154,167,176,0.95)';
     rr2(ctx, x - tw / 2, y - th / 2, tw, th, th / 2.4); ctx.fill();
-    ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.stroke();
-    ctx.fillStyle = p && luminance(p.color) > 0.62 ? '#1d2b30' : '#ffffff';
+    ctx.lineWidth = 1.5; ctx.strokeStyle = p && luminance(p.tag) > 0.8 ? '#5b6670' : 'rgba(255,255,255,0.9)'; ctx.stroke();
+    ctx.fillStyle = p && luminance(p.tag) > 0.62 ? '#1d2b30' : '#ffffff';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(label, x, y + 1, tw - 6);
   }
 
-  // Étiquette du nom sur chaque carton de la réserve, posée sur sa face avant, à sa hauteur dans la pile :
-  // lisible même empilé ou juste derrière une étagère (dessinée par-dessus la 3D).
+  // V1.5 : pastille de couleur (code du produit) sur chaque carton de la réserve, dans le coin de sa face avant,
+  // à sa hauteur dans la pile. Petite : elle ne cache pas le carton, mais elle reste visible même empilé ou juste
+  // derrière une étagère (dessinée par-dessus la 3D). Le nom n'est plus écrit (il cachait les cartons).
   stackLabels(ctx, unit) {
     const st = this.game.state;
-    const fsz = Math.max(9, Math.round(unit * 0.19));
-    ctx.font = `800 ${fsz}px ${FONT3}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const lh = fsz + 3;
+    const rad = Math.max(4.5, unit * 0.11);
     st.delivery.forEach((stack, i) => {
       if (!stack.length) return;
       const d = DELIVERY_SPOTS[i];
@@ -1428,19 +1431,21 @@ export class Renderer3D {
       let prevY = Infinity;
       for (let k = 0; k < stack.length; k++) {
         const p = PRODUCT_BY_ID[stack[k].product];
-        const pt = this.toScreen(d.c + 0.5, pallet + 0.18 + k * 0.37, d.r + 0.76);
-        const y = Math.min(pt.y, prevY - lh); // jamais deux étiquettes l'une sur l'autre
+        const pt = this.toScreen(d.c + 0.79, pallet + 0.18 + k * 0.37, d.r + 0.76);
+        const y = Math.min(pt.y, prevY - rad * 1.7); // jamais deux pastilles l'une sur l'autre
         prevY = y;
-        const label = p.short;
-        const tw = Math.min(unit * 0.98, ctx.measureText(label).width + 12);
-        ctx.fillStyle = 'rgba(255,255,255,0.95)';
-        rr2(ctx, pt.x - tw / 2, y - lh / 2, tw, lh - 1, (lh - 1) / 2); ctx.fill();
-        ctx.fillStyle = p.color;
-        rr2(ctx, pt.x - tw / 2, y - lh / 2, 5, lh - 1, 2.5); ctx.fill();
-        ctx.fillStyle = '#1d2b30';
-        ctx.fillText(label, pt.x + 2, y, tw - 10);
+        this.tagDot(ctx, pt.x, y, rad, p);
       }
     });
+  }
+
+  tagDot(ctx, x, y, rad, p) {
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath(); ctx.arc(x + 0.8, y + 1.2, rad + 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = luminance(p.tag) > 0.8 ? '#5b6670' : '#ffffff';
+    ctx.beginPath(); ctx.arc(x, y, rad + 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = p.tag;
+    ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
   }
 
   pulse(ctx, x, y, rad, rgb = '255,138,61') {

@@ -236,8 +236,92 @@ allait ; une pile entourée (sauvegarde abîmée) n'est plus choisie ; plus d'al
 sa règle, plafonnée à +0,5 par client et payée en pièces : à surveiller en bêta (baisser `gainPerCoin` si
 besoin). Le tutoriel facultatif et rejouable n'est pas dans cette étape.
 
-## Prochaine version (V1.5)
-0. Tutoriel de quelques jours, facultatif et rejouable depuis le menu (dernier retour de Jack du 25/10).
+### V1.5 — tutoriel facultatif, code couleur des cartons, caisse réparée (25/10/2026)
+Dernier retour de Jack du 25/10 (tutoriel) et deux retours de bêta sur la V1.4 (cartons cachés par leur nom,
+caisse qui encaisse 1 600 au lieu de 1,60). Rien de la V1.4 n'est retiré.
+
+**A. Bug de caisse corrigé en premier (1 600 encaissés pour un ticket de 1,60)**
+- Cause : le terminal de carte n'avait pas de virgule. On tapait des centimes (« 160 » = 1,60) ; un 0 de trop
+  donnait 16,00, deux de trop 160,00… jusqu'à 9 999,99. Et une erreur en faveur du magasin coûtait au plus 2 points
+  de popularité, qu'elle soit de 0,10 ou de 1 600 pièces : surfacturer rapportait une fortune.
+- Saisie : on tape le montant comme on le lit, **avec la virgule** (touche « , » du pavé ; le point marche aussi et
+  devient une virgule). Au plus 3 chiffres avant la virgule (999,99) et 2 après : le chiffre en trop est refusé avec
+  un message. « 1,6 », « 1,60 » et « 1.6 » donnent tous 1,60.
+- Seuils **proportionnels au ticket** (fixés par le chef de projet avec Jack ; réglages dans `CASH_ERRORS` et
+  `cashThresholds()`, `src/data.js`). Écart = ce que le client paie en trop :
+  1. jusqu'à **max(0,20 ; 5 % du ticket)** : peut passer inaperçu ; plus l'écart est grand, plus il se voit ;
+  2. au-dessus, jusqu'à **min(10 ; max(2 ; 50 % du ticket))** : le client le voit toujours, il paie quand même, la
+     popularité baisse de −2 (−1,5 pour un caissier) plus 0,6 par pièce au-delà du seuil 1 ;
+  3. au-delà : il **refuse** : vente annulée, pas une pièce encaissée, articles reposés en rayon, client furieux
+     (compté « parti fâché »), −8 de popularité plus 0,4 par pièce au-delà du seuil (25 au plus).
+  Exemples : ticket 1,60 → inaperçu jusqu'à +0,20, paie jusqu'à +2,00, refuse au-delà.
+  Ticket 30 → inaperçu jusqu'à +1,50, paie jusqu'à +10,00, refuse au-delà.
+- **Bouche-à-oreille** (pour que ce ne soit pas un glitch) : chaque pièce prise en trop et remarquée, au-delà du
+  seuil 1, rend le quartier méfiant. Clients des jours suivants × (1 − méfiance / 25), méfiance divisée par 2
+  chaque nuit. Seulement quand c'est toi qui encaisses : l'erreur d'un caissier n'en crée pas.
+- Rendu de monnaie : même règle (garder trop de monnaie = surfacturer). Trop rendu : le gain de popularité reste
+  plafonné à +0,5 par client, et ça coûte les pièces rendues.
+- Caissiers : un article compté deux fois suit la même règle, y compris le refus.
+- **Simulation** (test permanent dans `tests/v15.test.mjs`) : le robot joue 6 parties de 8 jours sans rien acheter
+  d'autre que la marchandise, honnête ou en surfacturant chaque client. Pièces à la fin, en moyenne :
+  honnête 213 ; +1 pièce 91 ; +3 pièces −35 ; +5 pièces −50 ; +10 pièces −57. Le joueur honnête finit plus riche
+  dans les 6 parties, quel que soit l'écart.
+
+**B. Code couleur des cartons (retour de Jack : les noms cachaient les cartons)**
+- Plus aucun nom écrit sur les cartons. Chaque produit a une **couleur d'étiquette** (`tag` dans `src/data.js`) :
+  Eau bleue, Pâtes orange, Chips rouge, Soda violette, Biscuits marron, Lait blanche, Café noire, Céréales jaune,
+  Savon turquoise, Chocolat rose, Riz grise, Jus vert clair, Shampoing bleu marine, Fromage beige,
+  Confiture bordeaux, Thé vert foncé, Dentifrice bleu ciel, Bonbons lilas.
+- En 3D : une bande de couleur en travers du dessus du carton (comme un adhésif) et une étiquette de couleur sur la
+  face avant, avec la petite icône du produit (aide pour les daltoniens). Une petite pastille de couleur dans le
+  coin de chaque carton de la réserve reste visible même empilé ou juste derrière une étagère.
+  En 2D : bande de couleur en haut du carton, ou en bas de sa partie visible quand un autre carton est posé dessus.
+- Le nom reste **uniquement sur les étagères** : le panneau et le haut de l'étagère prennent la même couleur que
+  l'étiquette des cartons. Couleurs testées pour rester bien différentes entre elles.
+- Captures avant/après (3D et 2D) prises dans le Chrome mobile simulé.
+
+**C. Tutoriel facultatif et rejouable**
+- **Proposé au tout premier lancement** (fenêtre « Bienvenue ! » : Passer / Jouer le tutoriel), jamais imposé.
+  Un joueur qui a déjà une partie n'a pas de fenêtre : un petit message lui signale le tutoriel dans le menu ☰.
+- **Rejouable à tout moment** : menu ☰ → « 📘 Tutoriel » → Jouer (ou Reprendre / Recommencer s'il a été quitté en
+  route). Il se joue dans une **partie d'essai séparée**, avec sa propre clé de sauvegarde
+  (`superette-tuto-save-v1`). La partie normale (`superette-save-v1`) est sauvegardée une dernière fois au lancement
+  du tutoriel, puis plus jamais lue ni écrite jusqu'au retour ; testé avant, pendant et après.
+- **Quitter à tout moment** : bouton « Quitter » de la bulle, ou menu ☰ → confirmation → retour à sa partie telle
+  qu'elle était. Le tutoriel est gardé pour « Reprendre ». À la fin, la partie d'essai est effacée.
+- « Nouvelle partie » (V1.3) inchangé ; il n'apparaît pas dans le menu pendant le tutoriel (il effacerait la partie
+  d'essai, pas la vraie, ce qui prêterait à confusion).
+- **18 étapes sur 2 journées**, chacune avec un objectif concret ; ce qu'il faut toucher est entouré d'un anneau
+  orange qui pulse (boutons, articles, cases du magasin) ; la bulle se place en haut ou en bas pour ne jamais
+  cacher la cible, peut être repliée (—), et s'efface quand une fenêtre sans rapport s'ouvre (niveau gagné) :
+  1. Bienvenue (partie d'essai, 400 pièces pour l'essai) · 2. Commander 1 carton d'Eau et 1 de Pâtes (🛒) ·
+  3. Le code couleur des cartons et la réserve (30 cartons) · 4. Ranger la réserve : prendre un carton et le
+  reposer sur une case libre (3 par pile, garder un passage) · 5. Mettre en rayon : chaque carton dans l'étagère de
+  sa couleur, lire le nom (18 articles par rayon) · 6. Fixer un prix (prix plancher = prix d'achat, effet sur la
+  popularité et les ventes) · 7. Ouvrir le magasin · 8. Aller à la caisse · 9. Scanner · 10. Rendre la monnaie (trop
+  rendu / pas assez) · 11. Paiement par carte avec la virgule, et les trois zones d'erreur de caisse ·
+  12. Finir la journée (vitesse ×2, ×3) · 13. Le bilan : ventes, achats, loyer et charges, résultat, demandes non
+  satisfaites (un client du scénario veut des Chips absentes) · 14. Embaucher (caissier niveau 2, magasinier
+  niveau 3, étoiles, contrat de 7 journées) · 15. Acheter une étagère · 16. Déplacer une étagère (gratuit, le
+  produit suit) · 17. Niveaux et déblocages (liste réelle tirée du code) · 18. Journée 2 en autonomie, puis
+  « Tutoriel terminé » → retour à sa partie.
+- **Scénario fixe** pour que chaque étape soit faisable : rayons Eau et Pâtes déjà attribués, niveau 2 presque fini
+  (le niveau 3 arrive pendant la journée 1 et débloque le magasinier), les 3 premiers clients ont une liste connue
+  (le 3e veut des Chips), le 1er paie en espèces et le 2e par carte. Les **règles** sont celles du vrai jeu : le
+  tutoriel n'ajoute que ces listes et ces modes de paiement imposés, et seulement dans la partie d'essai.
+- Fichiers : `src/tutorial.js` (étapes, scénario, sauvegardes, sans DOM, testé sous Node) et `src/tutoui.js`
+  (bulle et anneaux). Les anciennes petites bulles d'aide de la V1.0 restent dans la partie normale ; elles sont
+  coupées dans le tutoriel.
+
+**Sauvegarde** : clé `superette-save-v1` inchangée. Une partie V1.4 se charge sans rien perdre (pas de méfiance,
+pas de tutoriel en cours). Nouvelles clés à part : `superette-tuto-save-v1` (partie d'essai) et `superette-tuto-v1`
+(tutoriel déjà proposé ? partie en cours = normale ou essai ?).
+
+**Vérifications** : VERIF_PLACEHOLDER
+
+**Limites connues** : LIMITES_PLACEHOLDER
+
+## Prochaine version (V1.6)
 1. **Concurrents dans le quartier** : 1 puis 2 magasins rivaux qui apparaissent avec la progression ; ils prennent des
    clients quand ta popularité est plus basse que la leur (facteur dans `dayMultiplier()`), font parfois des promos,
    et apparaissent dans le bilan (« Le Discount d'en face t'a pris 6 clients »).

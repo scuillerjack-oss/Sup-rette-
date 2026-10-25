@@ -367,19 +367,21 @@ test('demandes non satisfaites : compte les produits voulus par un client et abs
 // ------------------------------------------------------------------ E. erreurs de caisse
 test('erreurs de caisse : erreur, détection et réaction séparées (règle de Jack)', () => {
   // 1) l'erreur
-  assert.deepEqual(cashError(500, 500), { diff: 0, favor: null, amount: 0 });
+  assert.deepEqual(cashError(500, 500), { diff: 0, favor: null, amount: 0, due: 500 });
   assert.equal(cashError(500, 400).favor, 'client');
   assert.equal(cashError(500, 650).favor, 'magasin');
   // 2) la détection : jamais pour une erreur en faveur du client
   assert.equal(cashDetect(cashError(500, 400), 1, () => 0), false);
-  assert.equal(cashDetect(cashError(500, 600), 0.7, () => 0.69), true);
-  assert.equal(cashDetect(cashError(500, 600), 0.7, () => 0.71), false);
+  // V1.5 : petit écart (zone « inaperçu » : 0,20 pour un ticket de 5,00) → chance de base × (0,4 + 0,6 × écart / seuil)
+  assert.equal(cashDetect(cashError(500, 520), 0.7, () => 0.6), true);
+  assert.equal(cashDetect(cashError(500, 520), 0.7, () => 0.65), false);
+  assert.equal(cashDetect(cashError(500, 600), 0.7, () => 0.99), true, 'V1.5 : 1 pièce de trop sur 5,00 se voit toujours');
   // 3) la réaction
   const gift = cashReaction(cashError(500, 300), false);
   assert.ok(gift.rep > 0 && gift.rep <= CASH_ERRORS.gainMax, 'en faveur du client : la popularité monte un peu');
   assert.ok(cashReaction(cashError(500, 100), false).rep <= CASH_ERRORS.gainMax, 'plafonné');
   assert.ok(cashReaction(cashError(500, 600), true).rep < 0, 'remarquée : elle baisse');
-  assert.equal(cashReaction(cashError(500, 600), false).rep, 0, 'pas remarquée : rien');
+  assert.equal(cashReaction(cashError(500, 520), false).rep, 0, 'pas remarquée : rien');
   assert.equal(cashReaction(cashError(500, 500), false).rep, 0);
 });
 
@@ -426,7 +428,7 @@ test('erreurs de caisse en jeu : trop rendu → popularité qui monte ; pas asse
     g = new Game();
     atRegister(g, [{ product: 'eau', price: 100 }]);
     Object.assign(g.checkout, { step: 'cash', paidWith: 500, given: [] });
-    g.giveChange(300);
+    g.giveChange(200); g.giveChange(100); g.giveChange(50); g.giveChange(20); g.giveChange(10); // 0,20 de moins (V1.5 : petit écart)
     res = g.validateCash();
     assert.equal(res.noticed, false);
     assert.equal(cashRep(g), 0, 'aucune variation');
@@ -434,13 +436,13 @@ test('erreurs de caisse en jeu : trop rendu → popularité qui monte ; pas asse
     g = new Game();
     atRegister(g, [{ product: 'eau', price: 300 }]);
     g.checkout.step = 'card'; g.checkout.card = '';
-    for (const k of '200') g.cardKey(k);
+    for (const k of '2') g.cardKey(k);
     g.cardKey('ok');
     assert.ok(cashRep(g) > 0);
     g = new Game();
     atRegister(g, [{ product: 'eau', price: 300 }]);
     g.checkout.step = 'card'; g.checkout.card = '';
-    for (const k of '400') g.cardKey(k);
+    for (const k of '3,2') g.cardKey(k); // 0,20 de trop sur 3,00 (V1.5 : petit écart)
     assert.equal(g.cardKey('ok').noticed, false);
     assert.equal(cashRep(g), 0);
   } finally {
@@ -458,10 +460,11 @@ test('erreurs de caisse d’un caissier : même règle (article oublié = cadeau
       g.state.staff.cashiers = [{ id: 1, name: 'Léa', level: 1, days: 3, look: 0 }];
       g.state.registers = [1];
       g.player.atRegister = null;
-      const cu = { ...g.makeAgent(10, 2, { kind: 'customer' }), basket: [{ product: 'eau', price: 100 }], mood: 1, register: 1, list: [], idx: 0 };
+      // V1.5 : 10 articles à 0,20 → un article compté deux fois = 0,20 sur 2,00 (petit écart, peut passer inaperçu)
+      const cu = { ...g.makeAgent(10, 2, { kind: 'customer' }), basket: Array.from({ length: 10 }, () => ({ product: 'eau', price: 20 })), mood: 1, register: 1, list: [], idx: 0 };
       g.customers.push(cu);
       g.queues.get(1).push(cu.id);
-      g.updateRegister(1, 10);
+      g.updateRegister(1, 30); // 10 articles : passage plus long
       return cashRep(g);
     };
     // rolls : [erreur ?, choix de l'article, over ?, remarqué ?, …]

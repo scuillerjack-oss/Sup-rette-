@@ -137,7 +137,7 @@ export class UI {
       case 'save': this.hooks.save(); break;
       case 'staffError':
         this.toast(data.over
-          ? `${data.name} a compté un article en trop (+${money(data.amount)})${data.noticed ? ' : le client a remarqué 😠' : ''}`
+          ? `${data.name} a compté un article en trop (+${money(data.amount)})${data.refused ? ' : le client refuse de payer 😡' : data.noticed ? ' : le client a remarqué 😠' : ''}`
           : `${data.name} a oublié un article (−${money(data.amount)}) : client ravi 🎁`, 'warn');
         break;
       case 'empty': {
@@ -493,13 +493,28 @@ export class UI {
       <button class="primary" data-a="shelf" data-id="${slotId}" ${g.state.coins < cost ? 'disabled' : ''}>Installer</button></div>`;
   }
 
+  // V1.5 : ligne « Tutoriel » du menu. Hors tutoriel : jouer / reprendre / recommencer (la partie est gardée).
+  // Pendant le tutoriel : quitter (retour à sa partie) ou recommencer le tutoriel.
+  tutoMenuHtml() {
+    if (this.hooks.tutoMode) {
+      return `<div class="row tutorow"><div class="info"><b>📘 Tutoriel en cours</b><span>Partie d’essai : ta vraie partie est gardée de côté.</span></div>
+        <div class="btns"><button class="ghost" data-a="tutoRestart">Recommencer</button><button class="primary" data-a="tutoQuit">Quitter</button></div></div>`;
+    }
+    const step = this.hooks.tutoStep ? this.hooks.tutoStep() : null;
+    const resume = step != null && step > 0;
+    return `<div class="row tutorow"><div class="info"><b>📘 Tutoriel</b><span>Apprendre le jeu en 2 journées. Ta partie n’est pas effacée.</span></div>
+      <div class="btns">${resume ? '<button class="ghost" data-a="tutoRestart">Recommencer</button><button class="primary" data-a="tutoResume">Reprendre</button>' : '<button class="primary" data-a="tutoPlay">Jouer</button>'}</div></div>`;
+  }
+
   menuHtml() {
     const s = this.g.state;
-    return `${this.head('Ma P’tite Supérette', `Jour ${s.day} · ${s.totals.served} clients servis au total`)}
+    const tuto = this.hooks.tutoMode;
+    return `${this.head(tuto ? 'Tutoriel · partie d’essai' : 'Ma P’tite Supérette', tuto ? `Jour ${s.day} du tutoriel` : `Jour ${s.day} · ${s.totals.served} clients servis au total`)}
       <div class="list">
+        ${this.tutoMenuHtml()}
         <div class="row"><div class="info"><b>Sons</b><span>Bips, caisse, livraisons</span></div><button class="toggle ${settings.sound ? 'on' : ''}" data-a="sound">${settings.sound ? 'Activés' : 'Coupés'}</button></div>
         <div class="row"><div class="info"><b>Vibrations</b><span>Rayon vide, scan, passage de niveau</span></div><button class="toggle ${settings.haptics ? 'on' : ''}" data-a="haptics">${settings.haptics ? 'Activées' : 'Coupées'}</button></div>
-        <div class="row"><div class="info"><b>Nouvelle partie</b><span>Recommencer au jour 1 (sons et vibrations gardés)</span></div><button class="danger" data-a="reset">Recommencer</button></div>
+        ${tuto ? '' : '<div class="row"><div class="info"><b>Nouvelle partie</b><span>Recommencer au jour 1 (sons et vibrations gardés)</span></div><button class="danger" data-a="reset">Recommencer</button></div>'}
       </div>
       <p class="credits">Version <b id="menuVersion">v${esc(BUILD_VERSION)}</b>${this.updateVersion ? ` · <button class="linkbtn" data-a="update">nouvelle version v${esc(this.updateVersion)} : mettre à jour</button>` : ''} · tout est dessiné par le code, sans achat ni diamant.</p>`;
   }
@@ -545,6 +560,10 @@ export class UI {
         this.nextModal();
         return;
       case 'update': return this.hooks.update();
+      case 'tutoPlay': this.close(); return this.hooks.startTutorial(true);
+      case 'tutoRestart': this.close(); return this.hooks.startTutorial(true);
+      case 'tutoResume': this.close(); return this.hooks.startTutorial(false);
+      case 'tutoQuit': this.close(); return this.askQuitTutorial();
       default: break;
     }
     if (res && !res.ok && res.reason) {
@@ -587,9 +606,10 @@ export class UI {
         <div class="co-actions"><button data-a="undo" ${given ? '' : 'disabled'}>Annuler</button><button class="primary" data-a="cash" ${given || due === 0 ? '' : 'disabled'}>Valider</button></div>
       </div>`;
     } else if (co.step === 'card') {
-      const typed = co.card ? money(parseInt(co.card, 10)) : '0,00';
-      pay = `<div class="card-pay"><div class="terminal"><small>Paiement par carte · tape le montant</small><b>${typed}</b></div>
-        <div class="keypad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'].map((k) => `<button data-a="key" data-k="${k}" class="${k === 'ok' ? 'primary' : ''}">${k === 'del' ? '⌫' : k === 'ok' ? 'OK' : k}</button>`).join('')}</div></div>`;
+      // V1.5 : on tape le montant comme on le lit, avec la virgule (« 1,60 »), 999,99 au plus.
+      const typed = co.card || '0';
+      pay = `<div class="card-pay"><div class="terminal"><small>Paiement par carte · tape ${money(co.total)} (avec la virgule)</small><b>${esc(typed)}</b></div>
+        <div class="keypad">${['1', '2', '3', '4', '5', '6', '7', '8', '9', ',', '0', 'del'].map((k) => `<button data-a="key" data-k="${k}" aria-label="${k === 'del' ? 'Effacer' : k === ',' ? 'Virgule' : k}">${k === 'del' ? '⌫' : k}</button>`).join('')}<button data-a="key" data-k="ok" class="primary okkey">OK</button></div></div>`;
     } else if (co.step === 'exact') {
       pay = `<div class="exact"><p>Le client paie l’appoint : <b>${money(co.total)}</b></p><button class="primary" data-a="exact">Encaisser</button></div>`;
     }
@@ -611,7 +631,8 @@ export class UI {
       case 'undo': g.undoChange(); sfx('tick'); break;
       case 'cash': {
         const r = g.validateCash();
-        if (r.ok && r.excess > 0) this.toast(`Tu as rendu ${money(r.excess)} de trop`, 'warn');
+        if (r.ok && r.refused) this.toast(`Il manque ${money(-r.excess)} : le client refuse de payer et part furieux 😡`, 'warn');
+        else if (r.ok && r.excess > 0) this.toast(`Tu as rendu ${money(r.excess)} de trop`, 'warn');
         else if (r.ok && r.excess < 0) this.toast(r.noticed ? `Il manque ${money(-r.excess)} : le client a remarqué 😠` : `Il manquait ${money(-r.excess)}… personne n’a rien vu`, 'warn');
         else if (r.ok) this.toast('Monnaie parfaite ✨');
         break;
@@ -619,7 +640,8 @@ export class UI {
       case 'exact': g.validateExact(); break;
       case 'key': {
         const r = g.cardKey(b.dataset.k);
-        if (r.ok && r.diff > 0) this.toast(r.noticed ? `Client facturé ${money(r.diff)} de trop : il a remarqué 😠` : `Client facturé ${money(r.diff)} de trop… ni vu ni connu`, 'warn');
+        if (r.ok && r.refused) this.toast(`${money(r.diff)} de trop : le client refuse de payer et part furieux 😡`, 'warn');
+        else if (r.ok && r.diff > 0) this.toast(r.noticed ? `Client facturé ${money(r.diff)} de trop : il a remarqué 😠` : `Client facturé ${money(r.diff)} de trop… ni vu ni connu`, 'warn');
         if (r.ok && r.diff < 0) this.toast(`Tu as encaissé ${money(-r.diff)} de moins`, 'warn');
         if (!r.ok && r.reason) {
           this.toast(r.reason, 'warn');
@@ -662,6 +684,14 @@ export class UI {
       card.innerHTML = `<div class="burst">🧺</div><h2>Nouvelle partie ?</h2>
         <p class="reset-txt">Ta supérette repart <b>au jour 1</b> : argent, stock, réserve, étagères, personnel, popularité, niveau et objectifs sont <b>effacés</b>.<br>Les sons et vibrations sont gardés.</p>
         <div class="reset-btns"><button class="ghost" data-a="cancel">Annuler</button><button class="primary danger-fill" data-a="resetYes">Oui, tout effacer</button></div>`;
+    } else if (m.kind === 'tutoOffer') {
+      card.innerHTML = `<div class="burst">🧺</div><h2>Bienvenue !</h2>
+        <p class="reset-txt">Tu veux apprendre le jeu avec un <b>tutoriel</b> de 2 journées ? Tu joues pour de vrai, pas à pas. Tu pourras le rejouer quand tu veux depuis le menu ☰.</p>
+        <div class="reset-btns"><button class="ghost" data-a="tutoSkip">Passer</button><button class="primary" data-a="tutoYes">Jouer le tutoriel</button></div>`;
+    } else if (m.kind === 'tutoQuit') {
+      card.innerHTML = `<div class="burst">📘</div><h2>Quitter le tutoriel ?</h2>
+        <p class="reset-txt">Tu retrouves ta partie telle que tu l’as laissée. Le tutoriel est gardé : <b>Reprendre</b> ou <b>Recommencer</b> depuis le menu ☰.</p>
+        <div class="reset-btns"><button class="ghost" data-a="cancel">Continuer</button><button class="primary" data-a="tutoLeave">Quitter</button></div>`;
     } else if (m.kind === 'summary') {
       const d = m.data;
       const line = (label, v, cls = '') => `<div class="sum-row ${cls}"><span>${label}</span><b>${v}</b></div>`;
@@ -680,6 +710,18 @@ export class UI {
         ${d.staffEnding.length ? `<p class="note">Fin de contrat : ${d.staffEnding.map(esc).join(', ')}. Pense à renouveler dans Personnel.</p>` : ''}
         <button class="primary" data-a="next">Préparer le jour ${d.day + 1}</button>`;
     }
+  }
+
+  // V1.5 : tutoriel proposé au tout premier lancement (jamais imposé).
+  offerTutorial() {
+    this.modals = [{ kind: 'tutoOffer' }, ...(this.modals || [])];
+    this.nextModal();
+  }
+
+  askQuitTutorial() {
+    this.close();
+    this.modals = [{ kind: 'tutoQuit' }, ...(this.modalOpen && this.modalOpen.kind !== 'tutoQuit' ? [this.modalOpen] : []), ...(this.modals || [])];
+    this.nextModal();
   }
 
   // V1.3 : bandeau « nouvelle version » (affiché en cours de partie, la partie n'est pas coupée).
@@ -708,6 +750,9 @@ export class UI {
       sfx('tick');
       return;
     }
+    if (b.dataset.a === 'tutoYes') { this.modals = []; return this.hooks.startTutorial(true); }
+    if (b.dataset.a === 'tutoLeave') { this.modals = []; return this.hooks.leaveTutorial({ finished: false }); }
+    if (b.dataset.a === 'tutoSkip') this.hooks.skipTutorial();
     if (b.dataset.a === 'resetYes') {
       this.modals = [];
       this.hooks.reset();

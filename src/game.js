@@ -4,7 +4,7 @@ import {
   ZONES, SHELF_SLOTS, SHELF_CAPACITY, REGISTERS, PRODUCTS, PRODUCT_BY_ID, START_COINS, START_SHELVES,
   MAX_LEVEL, staffLook, xpForLevel, shelfCost, dailyCharges, STAFF, CONTRACT_DAYS, buyChance, customersPerDay,
   CASHIER_LEVELS, STOCKER_LEVELS, FIRST_NAMES, maxCandidateLevel, priceReputation,
-  DELIVERY_SECONDS, PATIENCE_SECONDS, BILLS, EVENTS, EVENT_BY_ID, GOALS_PER_DAY, GOALS_FROM_DAY, goalReward
+  DELIVERY_SECONDS, PATIENCE_SECONDS, BILLS, EVENTS, EVENT_BY_ID, GOALS_PER_DAY, GOALS_FROM_DAY, goalReward, CARD_MAX_INT_DIGITS, cashThresholds
 } from './data.js';
 import { buildBlocked, findPath, reachable, DIRS } from './layout.js';
 
@@ -37,6 +37,7 @@ export function newState() {
     totals: { revenue: 0, served: 0, days: 0 },
     tutorial: 0,
     event: null, // événement de quartier du jour (V1.2)
+    distrust: 0, // méfiance du quartier après des clients surfacturés (V1.5)
     goals: null // objectifs du jour (V1.2) : { day, list: [{ kind, target, reward }] }
   };
 }
@@ -52,14 +53,19 @@ function emptyStats() {
 // 1) L'erreur : due = ce que le client devait payer, paid = ce qu'il a réellement payé.
 export function cashError(due, paid) {
   const diff = paid - due;
-  if (diff === 0) return { diff: 0, favor: null, amount: 0 };
-  return { diff, favor: diff < 0 ? 'client' : 'magasin', amount: Math.abs(diff) };
+  if (diff === 0) return { diff: 0, favor: null, amount: 0, due };
+  return { diff, favor: diff < 0 ? 'client' : 'magasin', amount: Math.abs(diff), due };
 }
 // 2) La détection : une erreur en faveur du client ne lui coûte rien (il n'a rien à « remarquer ») ;
 //    une erreur en faveur du magasin est remarquée avec la probabilité « chance ».
+//    V1.5 : seuils proportionnels au ticket (cashThresholds) : au-delà du seuil « inaperçu », le client remarque
+//    TOUJOURS ; en dessous, la chance de remarquer monte avec l'écart.
 export function cashDetect(err, chance, rnd = Math.random) {
   if (err.favor !== 'magasin') return false;
-  return rnd() < chance;
+  const th = cashThresholds(err.due ?? 0);
+  if (err.amount > th.discreet) return true;
+  const k = CASH_ERRORS.noticeFloor + (1 - CASH_ERRORS.noticeFloor) * (err.amount / th.discreet);
+  return rnd() < chance * k;
 }
 // 3) La réaction (règle de Jack) :
 //    - en faveur du client → la popularité monte un peu (selon le montant, plafonné) ;
@@ -71,9 +77,28 @@ export function cashReaction(err, noticed, who = 'player') {
     return { rep, why: 'cadeau', mood: 0.1, bubble: '😊' };
   }
   if (err.favor === 'magasin' && noticed) {
-    return { rep: -(who === 'cashier' ? CASH_ERRORS.lossCashier : CASH_ERRORS.lossPlayer), why: 'arnaque', mood: who === 'cashier' ? -0.6 : -0.7, bubble: '😠' };
+    const th = cashThresholds(err.due ?? 0);
+    const beyond = Math.max(0, err.amount - th.discreet) / 100; // pièces au-delà du seuil « inaperçu »
+    // V1.5, zone 3 : au-delà du seuil de refus, le client refuse de payer (la vente est annulée).
+    if (err.amount > th.refuse) {
+      const loss = Math.min(CASH_ERRORS.refuseLossMax, CASH_ERRORS.refuseLoss + CASH_ERRORS.refuseLossPerCoin * (err.amount - th.refuse) / 100);
+      return { rep: -Math.round(loss * 100) / 100, why: 'arnaque', mood: -1, bubble: '😡', refused: true, distrust: Math.max(1, beyond) };
+    }
+    // Zones 1 (remarquée) et 2 : il paie, la perte de popularité grandit avec l'écart (et le bouche-à-oreille suit).
+    const base = who === 'cashier' ? CASH_ERRORS.lossCashier : CASH_ERRORS.lossPlayer;
+    return { rep: -Math.round((base + beyond * CASH_ERRORS.lossPerCoin) * 100) / 100, why: 'arnaque', mood: who === 'cashier' ? -0.6 : -0.7, bubble: '😠', distrust: beyond };
   }
   return { rep: 0, why: null, mood: 0, bubble: null };
+}
+
+// V1.5 : montant tapé au terminal de carte → centimes (ou null si invalide). Le joueur tape comme il lit le prix :
+// « 1,60 », « 1,6 » ou « 1.6 » (virgule ou point) = 1 pièce 60 ; « 2 » = 2 pièces. Au plus 3 chiffres avant la
+// virgule et 2 après : plus de « 1 600 » tapé par erreur pour 1,60.
+export function parseCardAmount(text) {
+  const t = String(text || '').replace('.', ',');
+  const m = /^(\d{0,3})(?:,(\d{0,2}))?$/.exec(t);
+  if (!m || (!m[1] && !m[2])) return null;
+  return parseInt(m[1] || '0', 10) * 100 + parseInt((m[2] || '').padEnd(2, '0'), 10);
 }
 
 export function serialize(state) {
@@ -145,6 +170,16 @@ export const GOAL_KINDS = {
   pop: { icon: '⭐', label: (t) => `Gagner ${t} points de popularité`, value: (st) => Math.max(0, Math.floor(sumRep(st) * 10) / 10) }
 };
 
+// Ce qu'un niveau débloque (fenêtre « Niveau N ! » et tutoriel V1.5).
+export function unlocksAt(level) {
+  const unlocked = [];
+  for (const p of PRODUCTS) if (p.level === level) unlocked.push(`Licence ${p.name}`);
+  for (const z of ZONES) if (z.level === level && z.cost) unlocked.push(`Agrandissement : ${z.label}`);
+  for (const r of REGISTERS) if (r.level === level && r.cost) unlocked.push('Deuxième caisse');
+  for (const k of Object.keys(STAFF)) if (STAFF[k].level === level) unlocked.push(`${STAFF[k].label} à embaucher`);
+  return unlocked;
+}
+
 // ---------------------------------------------------------------- le jeu
 export class Game {
   constructor(state) {
@@ -166,6 +201,12 @@ export class Game {
     this.player.atRegister = null;
     this.stocker = null;
     this.moving = null; // mode « Déplacer une étagère » : { from: slotId | null }
+    // Tutoriel (V1.5) : scénario fixe. Listes d'achats imposées aux prochains clients, mode de paiement imposé au
+    // prochain passage en caisse, compteur de cartons reposés par le joueur. Rien de tout ça hors tutoriel.
+    this.scriptLists = [];
+    this.nextPayment = null;
+    this.drops = 0;
+    this.moves = 0; // étagères déplacées (tutoriel)
     this.syncStaff();
     // Ancienne sauvegarde (V1.1 et avant) : pas encore d'objectifs du jour.
     if (!this.state.goals || this.state.goals.day !== this.state.day) this.planDay(this.state.phase === 'prep');
@@ -747,7 +788,10 @@ export class Game {
     st.push(agent.carry);
     agent.carry = null;
     if (st.length === 1) this.reserveChanged();
-    if (agent.kind === 'player') this.emit('sfx', { name: 'drop' });
+    if (agent.kind === 'player') {
+      this.drops++;
+      this.emit('sfx', { name: 'drop' });
+    }
     return true;
   }
 
@@ -806,6 +850,7 @@ export class Game {
       if (endsAt(st, oldFront) || (st.task && st.task.shelf === shelf)) this.cancelTask(st, 0);
     }
     this.repathAll();
+    this.moves++;
     this.emit('sfx', { name: 'build' });
     return { ok: true };
   }
@@ -858,7 +903,13 @@ export class Game {
   // Multiplicateur de clients du jour. Point d'entrée prévu pour les concurrents du quartier (V1.3).
   dayMultiplier() {
     const ev = EVENT_BY_ID[this.state.event];
-    return ev ? ev.clients : 1;
+    return (ev ? ev.clients : 1) * this.trustFactor();
+  }
+
+  // V1.5 : bouche-à-oreille après des clients surfacturés (remarqué) : moins de clients, qui reviennent peu à peu.
+  trustFactor() {
+    const d = Math.max(0, this.state.distrust || 0);
+    return Math.max(CASH_ERRORS.distrustFloor, 1 - d / CASH_ERRORS.distrustScale);
   }
 
   planDay(withEvent = true) {
@@ -990,6 +1041,8 @@ export class Game {
     s.minute = DAY_START;
     s.phase = 'prep';
     s.stats = emptyStats();
+    s.distrust = Math.round((s.distrust || 0) * CASH_ERRORS.distrustDecay * 100) / 100;
+    if (s.distrust < 0.1) s.distrust = 0;
     this.syncStaff();
     this.planDay();
     this.checkAid();
@@ -1013,12 +1066,7 @@ export class Game {
     while (s.level < MAX_LEVEL && s.xp >= xpForLevel(s.level)) {
       s.xp -= xpForLevel(s.level);
       s.level++;
-      const unlocked = [];
-      for (const p of PRODUCTS) if (p.level === s.level) unlocked.push(`Licence ${p.name}`);
-      for (const z of ZONES) if (z.level === s.level && z.cost) unlocked.push(`Agrandissement : ${z.label}`);
-      for (const r of REGISTERS) if (r.level === s.level && r.cost) unlocked.push('Deuxième caisse');
-      for (const k of Object.keys(STAFF)) if (STAFF[k].level === s.level) unlocked.push(`${STAFF[k].label} à embaucher`);
-      this.emit('levelup', { level: s.level, unlocked });
+      this.emit('levelup', { level: s.level, unlocked: unlocksAt(s.level) });
     }
   }
 
@@ -1073,6 +1121,8 @@ export class Game {
       const id = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
       list.push({ product: id, want: Math.random() < 0.3 ? 2 : 1 });
     }
+    // Tutoriel : liste imposée (produits en rayon + un produit absent, pour voir une demande non satisfaite).
+    if (this.scriptLists.length) list.splice(0, list.length, ...this.scriptLists.shift().map((x) => ({ ...x })));
     const cu = this.makeAgent(SPAWN.r + 1, SPAWN.c, {
       kind: 'customer',
       speed: rand(1.7, 2.3),
@@ -1348,7 +1398,9 @@ export class Game {
   choosePayment() {
     const co = this.checkout;
     const total = co.total;
-    const r = Math.random();
+    const forced = { card: 0.1, exact: 0.45, cash: 0.9 }[this.nextPayment];
+    this.nextPayment = null;
+    const r = forced ?? Math.random();
     if (r < 0.4) {
       co.step = 'card';
       co.card = '';
@@ -1405,7 +1457,15 @@ export class Game {
         this.state.stats.perfect = (this.state.stats.perfect || 0) + 1;
       }
       // Trop rendu = erreur en faveur du client ; pas assez rendu = en faveur du magasin.
-      noticed = this.cashMistake(cu, co.total, co.paidWith - given, CASH_ERRORS.notice.change, 'player');
+      const mk = this.cashMistake(cu, co.total, co.paidWith - given, CASH_ERRORS.notice.change, 'player');
+      noticed = mk.noticed;
+      if (mk.refused) {
+        this.refuseSale(cu);
+        this.emit('sfx', { name: 'angry' });
+        this.emit('haptic', { ms: 40 });
+        this.emit('checkout', { open: false, excess });
+        return { ok: true, excess, noticed: true, refused: true };
+      }
       this.completeSale(cu, co.paidWith - given);
     }
     this.emit('sfx', { name: noticed ? 'angry' : 'cash' });
@@ -1429,8 +1489,9 @@ export class Game {
     if (!co || co.step !== 'card') return { ok: false };
     if (k === 'del') co.card = co.card.slice(0, -1);
     else if (k === 'ok') {
-      const value = parseInt(co.card || '0', 10);
-      if (!co.card || value <= 0) {
+      // V1.5 : le montant se tape comme on le lit (« 1,60 ») ; saisie bornée à 999,99.
+      const value = parseCardAmount(co.card);
+      if (value == null || value <= 0) {
         this.emit('sfx', { name: 'error' });
         return { ok: false, reason: 'Tape le montant à encaisser' };
       }
@@ -1440,36 +1501,75 @@ export class Game {
       this.checkout = null;
       if (cu) {
         // Facturé trop = en faveur du magasin (remarqué ou non) ; pas assez = en faveur du client.
-        noticed = this.cashMistake(cu, co.total, value, CASH_ERRORS.notice.card, 'player');
+        const mk = this.cashMistake(cu, co.total, value, CASH_ERRORS.notice.card, 'player');
+        noticed = mk.noticed;
+        if (mk.refused) {
+          this.refuseSale(cu);
+          this.emit('sfx', { name: 'angry' });
+          this.emit('haptic', { ms: 40 });
+          this.emit('checkout', { open: false });
+          return { ok: true, diff, noticed: true, refused: true };
+        }
         this.completeSale(cu, value);
       }
       this.emit('sfx', { name: noticed ? 'angry' : 'cash' });
       this.emit('haptic', { ms: 20 });
       this.emit('checkout', { open: false });
       return { ok: true, diff, noticed };
-    } else if (co.card.length < 6) {
-      co.card += k;
-      this.emit('sfx', { name: 'key' });
+    } else if (k === ',' || k === '.') {
+      if (!co.card.includes(',')) { co.card = (co.card || '0') + ','; this.emit('sfx', { name: 'key' }); }
+    } else if (/^\d$/.test(k)) {
+      // Pas plus de 3 chiffres avant la virgule ni 2 après : la saisie refuse le chiffre en trop.
+      const next = co.card + k;
+      const [a, b] = next.split(',');
+      if (a.length <= CARD_MAX_INT_DIGITS && (b === undefined || b.length <= 2)) {
+        co.card = next;
+        this.emit('sfx', { name: 'key' });
+      } else {
+        this.emit('sfx', { name: 'error' });
+        return { ok: false, reason: b === undefined ? 'Montant trop grand : tape la virgule pour les centimes' : 'Deux chiffres après la virgule au plus' };
+      }
     }
     return { ok: true };
   }
 
   // Erreur de caisse (V1.4) : erreur → détection → réaction, voir cashError / cashDetect / cashReaction.
-  // Renvoie true si le client a remarqué une erreur en sa défaveur.
+  // Renvoie { noticed, refused } : remarquée par le client ? refusée (plus de 10 pièces de trop, V1.5) ?
   cashMistake(cu, due, paid, chance, who) {
     const err = cashError(due, paid);
-    if (!err.favor) return false;
+    if (!err.favor) return { noticed: false, refused: false };
     const noticed = cashDetect(err, chance);
     const re = cashReaction(err, noticed, who);
     if (re.rep) this.addReputation(re.rep, re.why);
+    // Bouche-à-oreille (V1.5) : des clients en moins les jours suivants, voir dayMultiplier().
+    if (re.distrust && who === 'player') this.state.distrust = (this.state.distrust || 0) + re.distrust;
     cu.mood += re.mood;
     if (re.bubble) this.say(cu, re.bubble, 2.5);
     const st = this.state.stats;
     st.cashErrors = st.cashErrors || { client: 0, noticed: 0, unnoticed: 0 };
     if (err.favor === 'client') st.cashErrors.client++;
+    else if (re.refused) st.cashErrors.refused = (st.cashErrors.refused || 0) + 1;
     else if (noticed) st.cashErrors.noticed++;
     else st.cashErrors.unnoticed++;
-    return noticed;
+    return { noticed, refused: !!re.refused };
+  }
+
+  // V1.5 : le client refuse de payer un montant énorme. Pas de vente, pas d'argent : ses articles retournent en
+  // rayon (ou dans la réserve s'il n'y a plus de place), et il part fâché.
+  refuseSale(cu) {
+    const s = this.state;
+    for (const it of cu.basket) {
+      const shelf = s.shelves.find((x) => x.product === it.product && x.qty < SHELF_CAPACITY);
+      if (shelf) shelf.qty++;
+    }
+    cu.basket = [];
+    cu.processing = false;
+    s.stats.angry++;
+    this.say(cu, '😡', 3);
+    this.emit('refused', {});
+    this.leaveQueue(cu);
+    cu.state = 'leaving';
+    this.goto(cu, DOOR.r, DOOR.c, () => { cu.gone = true; });
   }
 
   abortCheckout() {
@@ -1507,7 +1607,8 @@ export class Game {
       s.minute += dt * GAME_MIN_PER_SEC;
       this.spawnClock -= dt * GAME_MIN_PER_SEC;
       if (this.spawnClock <= 0) {
-        const perDay = customersPerDay(s, Math.max(1, this.stockedTypes()), this.dayMultiplier());
+        // V1.5 : avec la méfiance du quartier, le minimum de 4 clients par jour ne s'applique plus.
+        const perDay = customersPerDay(s, Math.max(1, this.stockedTypes()), this.dayMultiplier(), this.trustFactor() < 1 ? 1 : 4);
         const interval = (DAY_END - DAY_START) / perDay;
         this.spawnClock = interval * rand(0.55, 1.45);
         if (this.customers.length < 18) this.spawnCustomer();
@@ -1623,8 +1724,12 @@ export class Game {
           const over = Math.random() < 0.5;
           received = over ? total + it.price : total - it.price;
           this.state.stats.staffErrors = (this.state.stats.staffErrors || 0) + 1;
-          const noticed = this.cashMistake(cu, total, received, CASH_ERRORS.notice.cashier, 'cashier');
-          this.emit('staffError', { name: cashier.name, over, amount: it.price, noticed });
+          const mk = this.cashMistake(cu, total, received, CASH_ERRORS.notice.cashier, 'cashier');
+          this.emit('staffError', { name: cashier.name, over, amount: it.price, noticed: mk.noticed, refused: mk.refused });
+          if (mk.refused) {
+            this.refuseSale(cu);
+            return;
+          }
         }
         this.completeSale(cu, received);
         this.emit('sfx', { name: 'cashSoft' });
