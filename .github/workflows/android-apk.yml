@@ -4,7 +4,8 @@ name: APK Android de bêta
 # (android-debug/, clé de débogage PUBLIQUE) et le publie à une adresse FIXE :
 #   https://github.com/scuillerjack-oss/Sup-rette-/releases/download/beta/superette-beta.apk
 # L'APK charge le jeu depuis GitHub Pages (scripts/apk-beta-config.js -> server.url) :
-# chaque fusion met à jour l'appli déjà installée au lancement suivant, sans retélécharger.
+# chaque fusion met à jour l'appli déjà installée au lancement suivant, sans retélécharger
+# (V1.3 : service worker « réseau d'abord » + vérification de dist/version.txt dans le jeu, voir src/update.js).
 # Le projet android/ n'est pas committé : il est régénéré ici (npx cap add android).
 # Sur une branche mission/** : compile pour vérifier, sans rien publier. Rien de payant.
 on:
@@ -34,7 +35,7 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: node build.mjs
       - run: node --test "tests/*.mjs"
-      - run: test -f dist/offline.html
+      - run: test -f dist/offline.html && test -f dist/version.txt
 
       - name: Générer le projet Android (jeu chargé depuis GitHub Pages)
         run: |
@@ -52,9 +53,11 @@ jobs:
       - name: Version automatique depuis package.json
         run: |
           read CODE NAME < <(node scripts/android-version.js "${{ github.run_number }}")
+          # Nom affiché = même version que dans le jeu (ex. 1.3.0+abc1234), tamponnée par build.mjs.
+          BUILD="$(cat dist/version.txt)"
           echo "SUPERETTE_VERSION_CODE=$CODE" >> "$GITHUB_ENV"
-          echo "SUPERETTE_VERSION_NAME=$NAME-beta" >> "$GITHUB_ENV"
-          echo "Version Android : $NAME-beta (code $CODE)"
+          echo "SUPERETTE_VERSION_NAME=$BUILD-beta" >> "$GITHUB_ENV"
+          echo "Version Android : $BUILD-beta (code $CODE)"
 
       - name: Compiler l'APK (clé de bêta stable)
         working-directory: android
@@ -88,6 +91,9 @@ jobs:
           S'installe par-dessus la bêta précédente (même signature) : la partie est conservée.
           Le jeu se met ensuite à jour tout seul depuis https://scuillerjack-oss.github.io/Sup-rette-/"
           if gh release view beta >/dev/null 2>&1; then
+            # Le tag « beta » suit le dernier commit publié (il était resté sur la V1.0 du 19/10).
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/beta" -f sha="$GITHUB_SHA" -F force=true >/dev/null \
+              || echo "Tag beta non déplacé (sans effet sur l'APK publié)"
             gh release upload beta superette-beta.apk --clobber
             gh release edit beta --prerelease --title "Bêta Android ${SUPERETTE_VERSION_NAME}" --notes "$NOTES"
           else

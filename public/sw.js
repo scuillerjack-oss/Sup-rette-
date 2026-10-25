@@ -1,15 +1,21 @@
-// Service worker de Ma P'tite Supérette.
-// Stratégie : « cache d'abord, mise à jour en arrière-plan » (stale-while-revalidate).
-// - Le jeu s'ouvre instantanément depuis le cache, même hors ligne, après le premier lancement.
-// - À chaque lancement en ligne, la nouvelle version est téléchargée en arrière-plan :
-//   elle s'affiche au lancement SUIVANT (pas besoin de toucher à ce fichier pour publier).
-// Monter VERSION seulement pour forcer le vidage complet des anciens caches.
-const VERSION = '1.0.0';
+// Service worker de Ma P'tite Supérette (V1.3, même principe que FRONTIÈRES: ARKEN).
+//
+// Stratégie : « RÉSEAU D'ABORD, cache en secours ».
+// - En ligne : on prend TOUJOURS la dernière version publiée sur GitHub Pages (le téléphone de Jack
+//   reçoit chaque fusion dans main dès le lancement suivant, dans le navigateur comme dans l'APK).
+// - Hors ligne : on sert la dernière copie gardée en cache ; sinon offline.html.
+// - Le nom du cache contient la version ET le commit (tamponnés par build.mjs) : chaque publication
+//   change ce fichier, le téléphone installe donc le nouveau service worker, qui efface les anciens caches.
+//
+// Pourquoi ce changement (cause racine du blocage en V1.0) : l'ancien service worker servait d'abord
+// le cache, sous un nom fixe « superette-1.0.0 ». L'appli installée réaffichait donc la V1.0 gardée
+// en cache au lieu de la version publiée.
+const VERSION = '__VERSION__';
 const CACHE_NAME = `superette-${VERSION}`;
 const SHELL = [
   './',
-  'index.html',
   'offline.html',
+  'version.txt',
   'manifest.webmanifest',
   'icons/icon-192.png',
   'icons/icon-512.png',
@@ -19,7 +25,8 @@ const SHELL = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(SHELL))
+      .then((cache) => cache.addAll(SHELL.map((u) => new Request(u, { cache: 'no-store' }))))
+      .catch(() => { /* hors ligne pendant l'installation : le cache se remplira en jouant */ })
       .then(() => self.skipWaiting())
   );
 });
@@ -41,29 +48,29 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   const isPage = req.mode === 'navigate';
+  // Les pages (avec ou sans ?paramètres) partagent toutes l'entrée du jeu.
+  const key = isPage ? new URL('./', self.registration.scope).href : req;
   event.respondWith((async () => {
-    const cache = await caches.open(CACHE_NAME);
-    // Les pages (avec ou sans ?paramètres) partagent toutes l'entrée du jeu.
-    const key = isPage ? new URL('./', self.registration.scope).href : req;
-    const cached = await cache.match(key, { ignoreSearch: isPage });
-
-    const network = fetch(req)
-      .then((res) => {
-        if (res && res.ok && res.type === 'basic' && !res.redirected) cache.put(key, res.clone());
-        return res;
-      })
-      .catch(() => null);
-
-    if (cached) {
-      event.waitUntil(network);
-      return cached;
+    try {
+      // Page et version.txt : cache: 'no-store' = toujours la copie du serveur, jamais celle du cache HTTP
+      // du téléphone (GitHub Pages autorise 10 min de cache) ; pas de requête conditionnelle « 304 » non plus,
+      // plus sûr dans l'APK où Capacitor relaie lui-même les pages HTML.
+      const fresh = isPage || url.pathname.endsWith('version.txt');
+      const res = await fetch(fresh ? new Request(req.url, { cache: 'no-store', credentials: 'same-origin' }) : req);
+      if (res && res.ok && res.type === 'basic') {
+        const copy = res.clone();
+        event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(key, copy)).catch(() => {}));
+      }
+      return res;
+    } catch (e) {
+      const cache = await caches.open(CACHE_NAME);
+      const cached = await cache.match(key, { ignoreSearch: isPage });
+      if (cached) return cached;
+      if (isPage) {
+        const offline = await cache.match('offline.html');
+        if (offline) return offline;
+      }
+      return Response.error();
     }
-    const res = await network;
-    if (res) return res;
-    if (isPage) {
-      const offline = await cache.match('offline.html');
-      if (offline) return offline;
-    }
-    return Response.error();
   })());
 });

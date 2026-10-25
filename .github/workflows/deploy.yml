@@ -36,11 +36,13 @@ jobs:
 
       - name: Vérifier le contenu de dist/
         run: |
-          for f in index.html sw.js offline.html manifest.webmanifest \
+          for f in index.html sw.js offline.html manifest.webmanifest version.txt \
                    icons/icon-192.png icons/icon-512.png icons/icon-512-maskable.png; do
             test -f "dist/$f" || { echo "Manquant dans dist/ : $f"; exit 1; }
           done
           if grep -E '(src|href)="/' dist/index.html; then echo "Chemin absolu trouvé (doit être relatif)"; exit 1; fi
+          if grep -q '__VERSION__\|__BUILD__' dist/index.html dist/sw.js; then echo "Version non tamponnée"; exit 1; fi
+          echo "Version publiée : $(cat dist/version.txt)"
 
       # Active Pages (source « GitHub Actions ») si ce n'est pas déjà fait. Le jeton GITHUB_TOKEN
       # n'a souvent pas le droit de le faire : on n'échoue pas ici, deploy-pages dira clairement

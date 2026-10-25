@@ -83,7 +83,79 @@ V1.2.0 — 20/10/2026 (demandes de Jack du 20/10) :
   `Game.dayMultiplier()` ; un concurrent n'aura qu'à multiplier ce facteur selon la popularité (déjà de 0 à 100,
   effet ×0,55 à ×1,45) et à ajouter sa cause dans le détail de popularité.
 
-## Prochaine version (V1.3)
+### V1.3 — bêta qui se met à jour toute seule, « Nouvelle partie » réparée, haut de l'écran dégagé (25/10/2026)
+Retours de bêta de Jack (19-25/10) traités dans cette étape : les 3 points bloquants seulement. Les autres retours
+(cartons lisibles, réserve libre et plus grande, magasinier, ordinateur retiré, erreurs de caisse, tutoriel…) sont
+les étapes suivantes. Aucun changement de gameplay.
+
+**1. La bêta restait en V1.0 sur le téléphone — cause racine (audit)**
+- Ce qui marchait : à chaque fusion, la CI a bien republié l'APK (V1.2.0, versionCode 10200005, le 20/10) et le site
+  GitHub Pages. Le tag git « beta » est bien resté sur le commit V1.0, mais il ne bloquait rien : l'adresse de l'APK
+  sert toujours le dernier fichier envoyé. Il est quand même déplacé désormais à chaque publication, pour que la page
+  GitHub de la bêta indique le bon commit.
+- La vraie cause : le **service worker** du jeu (le petit programme qui garde le jeu en mémoire pour le hors ligne).
+  En V1.0 il servait **d'abord la copie en cache** et téléchargeait la nouvelle version en arrière-plan, sous un nom
+  de cache figé (« superette-1.0.0 »), et le fichier `sw.js` ne changeait jamais d'une version à l'autre. L'appli
+  installée (qui charge le jeu depuis le site) réaffichait donc la V1.0 gardée en mémoire. Réinstaller l'APK par-dessus
+  ne vidait pas ce cache (il appartient à la WebView du téléphone, pas à l'APK).
+- Le mécanisme d'ARKEN (V12.1 + V12.2) qui marche : APK qui charge le site, service worker « réseau d'abord », cache
+  nommé par version+commit, `version.txt` publié, version visible.
+
+**Ce qui est fait**
+- `public/sw.js` réécrit : **réseau d'abord**, cache en secours seulement hors ligne ; nom du cache = version+commit
+  (tamponné par `build.mjs`), donc `sw.js` change à chaque publication et efface les anciens caches. Enregistré avec
+  `updateViaCache: 'none'` et revérifié à chaque retour dans l'appli.
+- `version.txt` publié avec le site ; le jeu le compare à sa propre version (`src/update.js`) :
+  au lancement, une version plus récente → sauvegarde puis rechargement automatique (une seule tentative par version,
+  jamais de boucle) ; en cours de partie (retour dans l'appli) → bandeau « Nouvelle version … Mettre à jour » qui ne
+  coupe pas la partie. Silencieux hors ligne.
+- **Version affichée** dans le jeu (petite étiquette en haut à droite du magasin + menu ☰), au format
+  `v1.3.0+abc1234` (numéro + commit court), comme ARKEN. L'APK porte le même nom (`1.3.0+abc1234-beta`).
+- APK : à la première ouverture d'un **nouvel APK**, l'ancien service worker gardé par la WebView est effacé
+  (`scripts/natif/MainActivity.java`, branché par `android-prepare.mjs`) ; la sauvegarde n'est pas touchée.
+  versionCode toujours croissant : 1.3.0 donne 10300000 + n° de build, au-dessus de la V1.2 publiée (10200005).
+- CI : le tag « beta » suit le dernier commit publié ; `deploy.yml` vérifie `version.txt` et le tamponnage.
+
+**2. « Nouvelle partie » ne faisait rien — cause et correction**
+- Cause : le bouton effaçait la sauvegarde puis rechargeait la page ; or le rechargement déclenche l'événement
+  « page cachée », qui **réécrivait aussitôt l'ancienne partie**. Au redémarrage, l'ancienne partie revenait.
+- Correction (`src/storage.js`) : une partie neuve est écrite et toute sauvegarde de l'ancienne est bloquée jusqu'au
+  rechargement. Bouton « Recommencer » dans le menu ☰ → fenêtre de confirmation « Nouvelle partie ? » (Annuler /
+  Oui, tout effacer). Tout repart de zéro (jour, pièces, stock, réserve, étagères, personnel, popularité, niveau,
+  objectifs, tutoriel) ; seuls les réglages son et vibrations sont gardés (clé à part, jamais touchée).
+  Clé de sauvegarde `superette-save-v1` inchangée.
+
+**3. Haut de l'écran sous l'heure, le wifi et la batterie**
+- L'en-tête descend sous la barre d'état (`env(safe-area-inset-top)`), la barre du bas reste au-dessus de la barre de
+  navigation (`safe-area-inset-bottom`), y compris panneaux, caisse et fenêtres. Sur les WebView Android plus anciennes,
+  on utilise aussi les valeurs injectées par Capacitor (`--safe-area-inset-*`, plugin SystemBars configuré dans
+  `capacitor.config.json`, icônes de la barre d'état en clair sur le fond sarcelle).
+
+**Vérifications** : 39 tests Node (15 nouveaux : comparaison de versions, rechargement unique, service worker réseau
+d'abord simulé en ligne/hors ligne, tamponnage du build, versionCode, workflow, nouvelle partie complète + réglages
+gardés + stockage plein, confirmation, zones protégées, purge Android). Chrome mobile simulé (393×851) : nouvelle
+partie (Annuler garde la partie, Oui repart au jour 1, relance = jour 1, réglages gardés), en-tête et barre du bas
+avec zones protégées simulées, passage d'une publication à la suivante (bandeau puis mise à jour, partie gardée),
+et passage depuis l'ancien service worker V1.0.
+
+**Ce qui reste manuel pour Jack (une seule fois)**
+1. Après la fusion, attendre ~5 min que la CI publie (onglet Actions vert).
+2. Sur le téléphone, ouvrir https://github.com/scuillerjack-oss/Sup-rette-/releases/download/beta/superette-beta.apk
+   et installer **par-dessus** l'appli actuelle (même signature : la partie est gardée).
+3. Ouvrir le jeu avec internet : l'étiquette en haut à droite doit afficher `v1.3.0+…`. Si elle n'apparaît pas,
+   fermer complètement l'appli (balayer dans les applis récentes) et la rouvrir.
+4. Ensuite, plus rien à faire : chaque fusion arrive au lancement suivant (ou via le bandeau « Mettre à jour »).
+   En dernier recours seulement : Paramètres Android → Applis → Ma P'tite Supérette → Stockage → « Vider le cache »
+   (pas « Effacer les données », qui supprimerait la partie).
+
+**Limites connues** : sans internet, l'appli affiche la dernière version gardée (normal). Un vrai Android n'a pas pu
+être testé depuis la session Claude (vérification faite en Chrome mobile simulé) : le retour de Jack après
+l'installation confirmera. Les nouveautés natives (purge du service worker, barre d'état) ne changent qu'avec un nouvel
+APK ; le jeu lui-même, oui, à chaque fusion.
+
+## Prochaine version (V1.4, ex-V1.3)
+0. D'abord les autres retours de bêta de Jack du 25/10 (cartons lisibles, réserve, magasinier, ordinateur retiré,
+   erreurs de caisse, « demandes non satisfaites », tutoriel facultatif), étape par étape.
 1. **Concurrents dans le quartier** : 1 puis 2 magasins rivaux qui apparaissent avec la progression ; ils prennent des
    clients quand ta popularité est plus basse que la leur (facteur dans `dayMultiplier()`), font parfois des promos,
    et apparaissent dans le bilan (« Le Discount d'en face t'a pris 6 clients »).

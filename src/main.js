@@ -6,6 +6,8 @@ import { Renderer3D, webglAvailable } from './render3d.js';
 import { UI } from './ui.js';
 import { resolveTap, isTap, TAP_RADIUS_MOVE } from './tap.js';
 import { settings, unlockAudio } from './audio.js';
+import { createSaver } from './storage.js';
+import { BUILD_VERSION, UPDATE_TRIED_KEY, fetchLatestVersion, updateAction } from './update.js';
 
 function loadState() {
   try {
@@ -43,21 +45,27 @@ function start(hotData) {
     renderer = new Renderer(cv, game);
   }
 
-  const save = () => {
-    try {
-      localStorage.setItem(SAVE_KEY, serialize(game.state));
-    } catch (e) { /* stockage indisponible : la partie continue */ }
-  };
+  let store = null;
+  try { store = window.localStorage; } catch (e) { store = null; }
+  const saver = createSaver(store || { setItem() {}, removeItem() {} }, SAVE_KEY, () => game.state, { fresh: newState, serializeFn: serialize });
+  const save = () => saver.save();
   const ui = new UI(game, renderer, {
     save,
     saveSettings: () => {
       try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* ignoré */ }
     },
+    // Nouvelle partie : partie neuve écrite, ancienne partie plus jamais sauvegardée, puis rechargement.
     reset: () => {
-      try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignoré */ }
+      saver.reset();
       location.reload();
-    }
+    },
+    update: () => { save(); location.reload(); }
   });
+  checkForUpdate(ui, save, true);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) checkForUpdate(ui, save, false);
+  });
+  setupSystemBars();
   window.__game = game;
   window.__renderer = renderer;
 
@@ -123,6 +131,35 @@ function start(hotData) {
   requestAnimationFrame(frame);
 
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { renderer.staticKey = ''; renderer.icons.clear(); });
+}
+
+// V1.3 : mise à jour automatique (voir src/update.js). Au lancement : rechargement direct sur la
+// nouvelle version (une seule tentative par version). En cours de partie : bandeau « Mettre à jour ».
+let lastCheck = 0;
+async function checkForUpdate(ui, save, atLaunch) {
+  if (BUILD_VERSION.includes('__') || /\+local$/.test(BUILD_VERSION) || window.claude) return;
+  const now = Date.now();
+  if (!atLaunch && now - lastCheck < 60000) return;
+  lastCheck = now;
+  const latest = await fetchLatestVersion();
+  let tried = null;
+  try { tried = sessionStorage.getItem(UPDATE_TRIED_KEY); } catch (e) { /* rien */ }
+  const action = updateAction(latest, BUILD_VERSION, { atLaunch, triedVersion: tried });
+  if (action === 'reload') {
+    try { sessionStorage.setItem(UPDATE_TRIED_KEY, latest); } catch (e) { /* rien */ }
+    save();
+    location.reload();
+  } else if (action === 'banner') {
+    ui.showUpdate(latest);
+  }
+}
+
+// Android (APK) : icônes claires dans la barre d'état, au-dessus de l'en-tête sarcelle.
+function setupSystemBars() {
+  try {
+    const bars = window.Capacitor?.Plugins?.SystemBars;
+    if (bars?.setStyle) bars.setStyle({ style: 'DARK', bar: 'StatusBar' }).catch(() => {});
+  } catch (e) { /* hors APK : rien */ }
 }
 
 const hot = window.claude?.hot;

@@ -4,6 +4,7 @@ import { PRODUCTS, PRODUCT_BY_ID, STAFF, ZONES, REGISTERS, SHELF_CAPACITY, CHANG
 import { cents } from './game.js';
 import { drawProduct, money } from './render.js';
 import { settings, sfx, haptic } from './audio.js';
+import { BUILD_VERSION } from './update.js';
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s).replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
@@ -64,6 +65,7 @@ export class UI {
     this.last = {};
     this.toastTimer = null;
     this.bind();
+    $('#verTag').textContent = `v${BUILD_VERSION}`;
     game.on((type, data) => this.onEvent(type, data));
     this.renderPhase();
   }
@@ -481,9 +483,9 @@ export class UI {
       <div class="list">
         <div class="row"><div class="info"><b>Sons</b><span>Bips, caisse, livraisons</span></div><button class="toggle ${settings.sound ? 'on' : ''}" data-a="sound">${settings.sound ? 'Activés' : 'Coupés'}</button></div>
         <div class="row"><div class="info"><b>Vibrations</b><span>Rayon vide, scan, passage de niveau</span></div><button class="toggle ${settings.haptics ? 'on' : ''}" data-a="haptics">${settings.haptics ? 'Activées' : 'Coupées'}</button></div>
-        <div class="row"><div class="info"><b>Recommencer</b><span>Efface la partie sur ce téléphone</span></div><button class="danger" data-a="reset">${this.confirmReset ? 'Confirmer' : 'Effacer'}</button></div>
+        <div class="row"><div class="info"><b>Nouvelle partie</b><span>Recommencer au jour 1 (sons et vibrations gardés)</span></div><button class="danger" data-a="reset">Recommencer</button></div>
       </div>
-      <p class="credits">Version __VERSION__ · tout est dessiné par le code, sans achat ni diamant.</p>`;
+      <p class="credits">Version <b id="menuVersion">v${esc(BUILD_VERSION)}</b>${this.updateVersion ? ` · <button class="linkbtn" data-a="update">nouvelle version v${esc(this.updateVersion)} : mettre à jour</button>` : ''} · tout est dessiné par le code, sans achat ni diamant.</p>`;
   }
 
   onSheetClick(e) {
@@ -520,9 +522,11 @@ export class UI {
       case 'sound': settings.sound = !settings.sound; this.hooks.saveSettings(); break;
       case 'haptics': settings.haptics = !settings.haptics; this.hooks.saveSettings(); if (settings.haptics) haptic(30); break;
       case 'reset':
-        if (this.confirmReset) return this.hooks.reset();
-        this.confirmReset = true;
-        break;
+        // V1.3 : confirmation dans une fenêtre claire avant d'effacer (voir onModalClick).
+        this.close();
+        this.queueModal({ kind: 'reset' });
+        return;
+      case 'update': return this.hooks.update();
       default: break;
     }
     if (res && !res.ok && res.reason) {
@@ -636,6 +640,10 @@ export class UI {
       card.innerHTML = `<div class="burst">⭐</div><h2>Niveau ${m.data.level} !</h2>
         ${m.data.unlocked.length ? `<ul>${m.data.unlocked.map((u) => `<li>${esc(u)}</li>`).join('')}</ul>` : '<p>Ta supérette gagne en réputation.</p>'}
         <button class="primary" data-a="ok">Super</button>`;
+    } else if (m.kind === 'reset') {
+      card.innerHTML = `<div class="burst">🧺</div><h2>Nouvelle partie ?</h2>
+        <p class="reset-txt">Ta supérette repart <b>au jour 1</b> : argent, stock, réserve, étagères, personnel, popularité, niveau et objectifs sont <b>effacés</b>.<br>Les sons et vibrations sont gardés.</p>
+        <div class="reset-btns"><button class="ghost" data-a="cancel">Annuler</button><button class="primary danger-fill" data-a="resetYes">Oui, tout effacer</button></div>`;
     } else if (m.kind === 'summary') {
       const d = m.data;
       const line = (label, v, cls = '') => `<div class="sum-row ${cls}"><span>${label}</span><b>${v}</b></div>`;
@@ -655,6 +663,17 @@ export class UI {
     }
   }
 
+  // V1.3 : bandeau « nouvelle version » (affiché en cours de partie, la partie n'est pas coupée).
+  showUpdate(latest) {
+    this.updateVersion = latest;
+    const bar = $('#updateBar');
+    if (!bar) return;
+    $('#updateVersion').textContent = `v${latest}`;
+    bar.hidden = false;
+    $('#updateGo').onclick = () => this.hooks.update();
+    $('#updateClose').onclick = () => { bar.hidden = true; };
+  }
+
   showSummary(summary) {
     this.close();
     this.g.cancelMove();
@@ -664,6 +683,11 @@ export class UI {
   onModalClick(e) {
     const b = e.target.closest('[data-a]');
     if (!b) return;
+    if (b.dataset.a === 'resetYes') {
+      this.modals = [];
+      this.hooks.reset();
+      return;
+    }
     if (b.dataset.a === 'next') {
       this.g.nextDay();
       this.renderPhase();
