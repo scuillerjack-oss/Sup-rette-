@@ -38,7 +38,26 @@ export function playBot({ days = 30, skill = 1, log = false, maxRealSeconds = 1e
 }
 
 function hasUsefulCarton(g) {
-  return g.state.delivery.some((st) => st.length && st.some((c) => g.shelfFor(c.product)));
+  return g.state.delivery.some((st) => st.length && playerShelfFor(g, st[st.length - 1].product));
+}
+
+// Le joueur (contrairement au personnel) peut réaffecter un rayon vide à un autre produit.
+export function playerShelfFor(g, product) {
+  const s = g.state;
+  const same = s.shelves.filter((x) => x.product === product && x.qty < SHELF_CAPACITY);
+  if (same.length) return same.sort((a, b) => a.qty - b.qty)[0];
+  if (s.shelves.some((x) => x.product === product && x.qty > 0)) return null;
+  return s.shelves.find((x) => !x.product || (x.qty === 0 && !g.productWanted(x.product))) || null;
+}
+
+// Pile dont le carton du dessus a une place en rayon, atteignable par le joueur.
+function usefulSpot(g) {
+  const s = g.state;
+  for (let i = 0; i < s.delivery.length; i++) {
+    const st = s.delivery[i];
+    if (st.length && playerShelfFor(g, st[st.length - 1].product) && g.accessFor(g.player, i)) return i;
+  }
+  return -1;
 }
 
 function invest(g) {
@@ -115,19 +134,19 @@ function step(g, dt, skill) {
         }
       }
     } else if (p.carry) {
-      const shelf = g.shelfFor(p.carry.product);
+      const shelf = playerShelfFor(g, p.carry.product);
       if (shelf) {
         const sl = SHELF_SLOTS.find((x) => x.id === shelf.slot);
         g.tap(sl.r, sl.c);
       } else {
-        const idx = s.delivery.findIndex((st) => st.length < 4);
+        const idx = g.findDropSpot(p.carry.product, p);
         if (idx >= 0) g.tap(DELIVERY_SPOTS[idx].r, DELIVERY_SPOTS[idx].c);
       }
     } else if (needReg && (p.atRegister !== needReg)) {
       const reg = REGISTERS.find((r) => r.id === needReg);
       g.tap(reg.staff.r, reg.staff.c);
     } else if (p.atRegister == null || !(g.queues.get(p.atRegister) || []).length) {
-      const idx = s.delivery.findIndex((st) => st.length && g.shelfFor(st[st.length - 1].product));
+      const idx = usefulSpot(g);
       if (idx >= 0 && !needReg) g.tap(DELIVERY_SPOTS[idx].r, DELIVERY_SPOTS[idx].c);
       else if (p.atRegister == null && s.phase !== 'prep') {
         const reg = REGISTERS.find((r) => r.id === s.registers.find((id) => !g.cashierAt(id)));

@@ -124,7 +124,9 @@ test('APK : versionCode toujours croissant, y compris en passant de 1.2 à 1.3',
   assert.ok(versionCodeFor('1.3.0', 6) > versionCodeFor('1.2.0', 5), 'V1.3 > V1.2 publiée (10200005)');
   assert.ok(versionCodeFor('1.3.0', 7) > versionCodeFor('1.3.0', 6));
   assert.ok(versionCodeFor('1.3.0', 1) > versionCodeFor('1.2.0', 999), 'monter la version repart plus haut');
-  assert.equal(JSON.parse(read('package.json')).version, '1.3.0');
+  // depuis la V1.4 : la version publiée monte toujours (1.4.0 > 1.3.0)
+  const v = JSON.parse(read('package.json')).version;
+  assert.ok(versionCodeFor(v, 1) > versionCodeFor('1.3.0', 999), `version ${v}`);
 });
 
 test('APK : chargé depuis le site, tag « beta » déplacé à chaque publication', () => {

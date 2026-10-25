@@ -1,6 +1,6 @@
 // Interface DOM : HUD, barre du bas, panneaux, mini-jeu de caisse, fin de journée.
 import { shouldCloseOnBackdrop } from './tap.js';
-import { PRODUCTS, PRODUCT_BY_ID, STAFF, ZONES, REGISTERS, SHELF_CAPACITY, CHANGE_MONEY, DAY_START, DAY_END, xpForLevel, dailyCharges, CASHIER_LEVELS, STOCKER_LEVELS, EVENT_BY_ID, GOALS_FROM_DAY } from './data.js';
+import { PRODUCTS, PRODUCT_BY_ID, STAFF, ZONES, REGISTERS, SHELF_CAPACITY, RESERVE_CAPACITY, CHANGE_MONEY, DAY_START, DAY_END, xpForLevel, dailyCharges, CASHIER_LEVELS, STOCKER_LEVELS, EVENT_BY_ID, GOALS_FROM_DAY } from './data.js';
 import { cents } from './game.js';
 import { drawProduct, money } from './render.js';
 import { settings, sfx, haptic } from './audio.js';
@@ -32,7 +32,7 @@ const coinSvg = '<span class="coin" aria-hidden="true"></span>';
 function popIcon(v) { return v >= 75 ? '🤩' : v >= 50 ? '😊' : v >= 25 ? '🙂' : '😟'; }
 function popLabel(v) { return v >= 75 ? 'le quartier adore' : v >= 50 ? 'bonne réputation' : v >= 25 ? 'on commence à te connaître' : 'les clients t’évitent'; }
 function popColor(v) { return v >= 50 ? '#3ccf8e' : v >= 25 ? '#ffd36b' : '#ff7a5c'; }
-const POP_CAUSES = { prix: '🏷️ Prix', service: '😊 Service', arnaque: '😠 Arnaques repérées', choix: '📦 Choix en rayon', personnel: '👥 Personnel' };
+const POP_CAUSES = { prix: '🏷️ Prix', service: '😊 Service', cadeau: '🎁 Erreurs de caisse en faveur du client', arnaque: '😠 Erreurs de caisse remarquées', choix: '📦 Choix en rayon', personnel: '👥 Personnel' };
 function popRows(rep) {
   if (!rep) return '';
   const rows = Object.keys(POP_CAUSES).filter((k) => Math.abs(rep[k] || 0) >= 0.05).map((k) => {
@@ -42,14 +42,23 @@ function popRows(rep) {
   return rows.length ? `<div class="poprows">${rows.join('')}</div>` : '';
 }
 
+// « Demandes non satisfaites » (nom avant la V1.4 : « introuvables », trop flou) : ce que mesure le jeu et comment l'améliorer.
+export const MISSING_HELP = 'Un client voulait un produit qui n’était pas en rayon (rayon vide ou absent), ou pas en quantité suffisante. Chaque demande ratée le rend moins content et fait baisser un peu la popularité.';
+const MISSING_TIPS = ['Remplis les rayons avant d’ouvrir et pendant la journée (ou embauche un magasinier).', 'Commande un peu d’avance : les cartons attendent dans la réserve.', 'Installe un rayon pour chaque produit dont tu as la licence.'];
+function missingHelp(by) {
+  const top = Object.entries(by || {}).sort((a, b) => b[1] - a[1]).slice(0, 4)
+    .map(([id, n]) => `<span>${esc(PRODUCT_BY_ID[id] ? PRODUCT_BY_ID[id].name : id)} × ${n}</span>`).join('');
+  return `<p>${MISSING_HELP}</p>${top ? `<div class="missing-top"><small>Les plus demandés :</small>${top}</div>` : ''}<ul>${MISSING_TIPS.map((t) => `<li>${t}</li>`).join('')}</ul>`;
+}
+
 function hhmm(min) {
   const m = Math.floor(min);
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 }
 
 const TUTO = [
-  'Touche le bouton « Commander » 🖥️ en bas (ou l’ordinateur en haut à droite) pour commander tes premiers cartons.',
-  'Les cartons arrivent dans la réserve. Touche un carton pour le prendre.',
+  'Touche le bouton « Commander » 🛒 en bas pour commander tes premiers cartons.',
+  'Les cartons arrivent dans la réserve (en haut). Touche un carton pour le prendre. Tu peux aussi le reposer où tu veux dans la réserve.',
   'Touche une étagère pour y ranger le carton.',
   'Ouvre le magasin, puis touche la caisse pour servir les clients.',
   ''
@@ -127,7 +136,9 @@ export class UI {
       case 'sale': if (this.sheet) this.refreshSheet(); break;
       case 'save': this.hooks.save(); break;
       case 'staffError':
-        this.toast(data.over ? `${data.name} a compté un article en trop (+${money(data.amount)})` : `${data.name} a oublié un article (−${money(data.amount)})`, 'warn');
+        this.toast(data.over
+          ? `${data.name} a compté un article en trop (+${money(data.amount)})${data.noticed ? ' : le client a remarqué 😠' : ''}`
+          : `${data.name} a oublié un article (−${money(data.amount)}) : client ravi 🎁`, 'warn');
         break;
       case 'empty': {
         const p = PRODUCT_BY_ID[data.product];
@@ -298,7 +309,7 @@ export class UI {
         <div class="step"><button data-a="minus" data-id="${p.id}" ${n ? '' : 'disabled'} aria-label="Retirer">−</button><output>${n}</output><button data-a="plus" data-id="${p.id}" aria-label="Ajouter">+</button></div>
       </div>`;
     }).join('');
-    return `${this.head('Commande fournisseur', `Place dans la réserve : ${room} carton${room > 1 ? 's' : ''}`)}
+    return `${this.head('Commande fournisseur', `Place dans la réserve : ${Math.max(0, room)} carton${Math.max(0, room) > 1 ? 's' : ''} sur ${RESERVE_CAPACITY}`)}
       <div class="list">${rows}</div>
       <div class="sh-foot">
         <div class="total"><span>${count} carton${count > 1 ? 's' : ''}</span><b>${coinSvg}${money(total)}</b></div>
@@ -344,7 +355,7 @@ export class UI {
         return `${lv.secPerItem.toFixed(1).replace('.', ',')} s / article · ${Math.round(lv.error * 100)} % d’erreurs`;
       }
       const lv = STOCKER_LEVELS[level - 1];
-      return `Vitesse ${Math.round((lv.speed / 1.8) * 100)} % · range ${Math.round(1 / lv.perUnit)} articles/s`;
+      return `Vitesse ${Math.round((lv.speed / 1.8) * 100)} % · range ${Math.round(1 / lv.perUnit)} articles/s · complète un rayon sous ${Math.round(lv.refill * 100)} %`;
     };
     const team = [];
     for (const c of s.staff.cashiers) team.push({ kind: 'cashier', m: c });
@@ -376,6 +387,10 @@ export class UI {
     return `${this.head('Personnel', 'Contrats de 7 journées payés d’avance. Plus d’étoiles : plus rapide, moins d’erreurs, plus cher.')}
       <h3 class="sec">Ton équipe</h3><div class="list">${teamHtml}</div>
       ${section('cashier')}${section('stocker')}
+      <div class="explain"><b>👷 Comment travaille le magasinier ?</b>
+        <p>À tous les niveaux, il range toujours chaque produit dans son rayon : l’eau avec l’eau, les pâtes avec les pâtes. Il ne prend un carton que s’il a de la place dans le bon rayon, et il va chercher un carton même coincé sous un autre.</p>
+        <p>Les étoiles changent seulement sa vitesse et son initiative : ⭐ il ne s’occupe d’un rayon que lorsqu’il est vide ou presque (sous 40 %) et réfléchit un moment entre deux cartons ; ⭐⭐⭐⭐⭐ il complète les rayons dès qu’il y manque quelques articles et enchaîne sans attendre.</p>
+        <p>Une étagère neuve sans produit reçoit un produit qui n’a pas encore de rayon. Pour changer le produit d’un rayon, c’est toi qui décides : vide-le et range-y un autre carton.</p></div>
       <p class="credits">Nouveaux candidats chaque semaine. Les meilleurs profils arrivent quand ton magasin monte de niveau.</p>`;
   }
 
@@ -419,8 +434,9 @@ export class UI {
         <div class="poprow"><span>📦 Choix de produits et rayons bien remplis</span><b class="pos">↑</b></div>
         <div class="poprow"><span>👥 Personnel de qualité (étoiles)</span><b class="pos">↑</b></div>
         <div class="poprow"><span>😊 Clients bien servis, sans attente</span><b class="pos">↑</b></div>
-        <div class="poprow"><span>😠 Client arnaqué qui s’en rend compte</span><b class="neg">↓↓</b></div>
-        <div class="poprow"><span>❓ Produits introuvables, file trop longue</span><b class="neg">↓</b></div>
+        <div class="poprow"><span>🎁 Erreur de caisse en faveur du client (trop rendu, pas assez encaissé)</span><b class="pos">↑</b></div>
+        <div class="poprow"><span>😠 Client qui remarque qu’il a payé trop</span><b class="neg">↓↓</b></div>
+        <div class="poprow"><span>❓ Demandes non satisfaites, file trop longue</span><b class="neg">↓</b></div>
       </div>
       <h3 class="sec">Aujourd’hui</h3>${popRows(s.stats.rep) || '<p class="empty">Rien de notable pour l’instant.</p>'}`;
   }
@@ -464,7 +480,7 @@ export class UI {
     return `${this.head(`Rayon ${esc(p.name)}`, `${sh.qty} / ${SHELF_CAPACITY} en rayon`)}
       <div class="gauge"><span style="width:${Math.round((sh.qty / SHELF_CAPACITY) * 100)}%"></span></div>
       <div class="list">${this.priceRow(p)}</div>
-      ${sh.qty === 0 ? '<p class="empty">Rayon vide : range un carton de n’importe quel produit pour le réaffecter.</p>' : ''}
+      ${sh.qty === 0 ? '<p class="empty">Rayon vide : toi, tu peux y ranger un carton d’un autre produit pour le réaffecter. Le magasinier, lui, n’y remettra que ce produit.</p>' : ''}
       ${moveBtn}`;
   }
 
@@ -657,7 +673,8 @@ export class UI {
           ${d.goalCoins ? line('Primes d’objectifs', `+${money(d.goalCoins)}`, 'pos') : ''}
           ${line('Résultat', `${d.profit >= 0 ? '+' : ''}${money(d.profit)}`, d.profit >= 0 ? 'big pos' : 'big neg')}
         </div>
-        <div class="chips"><span>🧺 ${d.served} clients</span><span>📦 ${d.sold} articles</span>${d.missing ? `<span class="warn">❓ ${d.missing} introuvables</span>` : ''}${d.angry ? `<span class="warn">😠 ${d.angry} partis fâchés</span>` : ''}${d.staffErrors ? `<span class="warn">🧾 ${d.staffErrors} erreur${d.staffErrors > 1 ? 's' : ''} de caisse</span>` : ''}<span>${popIcon(d.reputation)} popularité ${Math.round(d.reputation)} %</span></div>
+        <div class="chips"><span>🧺 ${d.served} clients</span><span>📦 ${d.sold} articles</span>${d.missing ? `<button class="warn chipbtn" data-a="missingHelp" aria-label="Qu’est-ce que c’est ?">❓ ${d.missing} demande${d.missing > 1 ? 's' : ''} non satisfaite${d.missing > 1 ? 's' : ''} <i>?</i></button>` : ''}${d.angry ? `<span class="warn">😠 ${d.angry} partis fâchés</span>` : ''}${d.staffErrors ? `<span class="warn">🧾 ${d.staffErrors} erreur${d.staffErrors > 1 ? 's' : ''} de caisse</span>` : ''}<span>${popIcon(d.reputation)} popularité ${Math.round(d.reputation)} %</span></div>
+        <div class="missing-help" hidden>${missingHelp(d.missingBy)}</div>
         ${popRows(d.rep)}
         ${d.goals && d.goals.length ? `<div class="sumgoals"><b>🎯 Objectifs : ${d.goals.filter((x) => x.done).length}/${d.goals.length}${d.goalCoins ? ` · +${money(d.goalCoins)} pièces` : ''}</b>${d.goals.map((x) => `<span class="${x.done ? 'ok' : 'ko'}">${x.done ? '✔' : '✘'} ${esc(x.label)}</span>`).join('')}</div>` : ''}
         ${d.staffEnding.length ? `<p class="note">Fin de contrat : ${d.staffEnding.map(esc).join(', ')}. Pense à renouveler dans Personnel.</p>` : ''}
@@ -685,6 +702,12 @@ export class UI {
   onModalClick(e) {
     const b = e.target.closest('[data-a]');
     if (!b) return;
+    if (b.dataset.a === 'missingHelp') {
+      const box = $('#modalCard .missing-help');
+      if (box) box.hidden = !box.hidden;
+      sfx('tick');
+      return;
+    }
     if (b.dataset.a === 'resetYes') {
       this.modals = [];
       this.hooks.reset();

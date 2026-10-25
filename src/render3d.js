@@ -2,7 +2,7 @@
 // V1.2 : décor fusionné par matériau (peu d'appels de rendu), articles reconnaissables instanciés,
 // personnages mieux proportionnés et animés, petites touches de vie (plantes, affiches, sacs).
 // Les textes (prix, bulles, alertes, gains) sont dessinés sur un calque 2D par-dessus.
-import { COLS, ROWS, DELIVERY_SPOTS, COMPUTER, ZONES, SHELF_SLOTS, SHELF_CAPACITY, REGISTERS, PRODUCT_BY_ID, PRODUCTS, DOOR, SPOT_STACK } from './data.js';
+import { COLS, ROWS, DELIVERY_SPOTS, ZONES, SHELF_SLOTS, SHELF_CAPACITY, REGISTERS, PRODUCT_BY_ID, PRODUCTS, DOOR, SPOT_STACK, SHOP_TOP, AUTO_SPOTS, staffLook } from './data.js';
 import { drawProduct, money } from './render.js';
 
 const FONT3 = '"Baloo 2", "Nunito", system-ui, sans-serif';
@@ -28,6 +28,12 @@ function mix(hex, amt, to = 255) {
 }
 const lighten = (hex, a) => mix(hex, a, 255);
 const darken = (hex, a) => mix(hex, a, 0);
+
+// Clarté d'une couleur (0 = noir, 1 = blanc) : texte sombre sur les couleurs claires.
+function luminance(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+}
 
 // Pseudo-hasard stable (même décor à chaque reconstruction).
 function hash(n) {
@@ -368,29 +374,35 @@ export class Renderer3D {
     outside.receiveShadow = true;
     s.add(outside);
 
-    // Sol de la réserve : béton, palettes, bande de sécurité
-    const conc = this.canvasTex(576, 128, (c, w, h) => {
+    // Sol de la réserve (V1.4 : 3 lignes, toute la largeur) : béton, palettes, bande de sécurité
+    const RH = SHOP_TOP - 1; // lignes de réserve
+    const conc = this.canvasTex(576, 64 * RH, (c, w, h) => {
       const gr = c.createLinearGradient(0, 0, 0, h);
       gr.addColorStop(0, '#b9b5ab'); gr.addColorStop(1, '#cbc7bc');
       c.fillStyle = gr; c.fillRect(0, 0, w, h);
-      for (let i = 0; i < 1400; i++) {
+      for (let i = 0; i < 2400; i++) {
         c.fillStyle = `rgba(${i % 2 ? 255 : 40},${i % 2 ? 255 : 40},${i % 2 ? 250 : 30},${0.03 + (i % 5) * 0.012})`;
         c.fillRect((i * 97.13) % w, (i * 53.7) % h, 1 + (i % 3), 1 + (i % 2));
       }
+      // fines lignes de la grille : chaque case est un emplacement possible
+      c.strokeStyle = 'rgba(80,70,55,0.13)'; c.lineWidth = 2;
+      for (let x = 0; x <= w; x += 64) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke(); }
+      for (let y = 0; y <= h; y += 64) { c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); }
       c.strokeStyle = 'rgba(232,178,40,0.9)'; c.lineWidth = 3; c.setLineDash([10, 7]);
-      for (const d of DELIVERY_SPOTS) { rr2(c, d.c * 64 + 4, 4, 56, 56, 8); c.stroke(); }
+      for (const i of AUTO_SPOTS) { const d = DELIVERY_SPOTS[i]; rr2(c, d.c * 64 + 4, (d.r - 1) * 64 + 4, 56, 56, 8); c.stroke(); }
       c.setLineDash([]);
       for (let x = 0; x < w; x += 24) {
-        c.fillStyle = '#f2c230'; c.fillRect(x, h - 10, 12, 10);
-        c.fillStyle = '#2c2c2c'; c.fillRect(x + 12, h - 10, 12, 10);
+        c.fillStyle = '#f2c230'; c.fillRect(x, h - 8, 12, 8);
+        c.fillStyle = '#2c2c2c'; c.fillRect(x + 12, h - 8, 12, 8);
       }
     });
-    const reserve = new T.Mesh(new T.PlaneGeometry(COLS, 2), new T.MeshStandardMaterial({ map: conc, roughness: 0.95 }));
+    const reserve = new T.Mesh(new T.PlaneGeometry(COLS, RH), new T.MeshStandardMaterial({ map: conc, roughness: 0.95 }));
     reserve.rotation.x = -Math.PI / 2;
-    reserve.position.set(COLS / 2, 0, 2);
+    reserve.position.set(COLS / 2, 0, 1 + RH / 2);
     reserve.receiveShadow = true;
     s.add(reserve);
-    for (const d of DELIVERY_SPOTS) {
+    for (const i of AUTO_SPOTS) {
+      const d = DELIVERY_SPOTS[i];
       const x = d.c + 0.5, z = d.r + 0.5;
       for (const dx of [-0.26, 0, 0.26]) b.box('paint', '#b88a55', 0.1, 0.06, 0.62, x + dx, 0, z);
       for (const dz of [-0.24, 0, 0.24]) b.box('paint', '#c99a62', 0.7, 0.03, 0.14, x, 0.06, z + dz);
@@ -410,19 +422,7 @@ export class Renderer3D {
       b.add('glow', G('sphLow'), i % 2 ? '#ffe6a8' : '#fff6d8', { x, y: 4.2, z: 0.78, sx: 0.09, sy: 0.09, sz: 0.09 });
       b.add('glow', G('sphLow'), i % 2 ? '#fff6d8' : '#ffe6a8', { x, y: 2.1, z: 0.78, sx: 0.09, sy: 0.09, sz: 0.09 });
     }
-    // Étagères murales de la réserve (métal) et stock en vrac
-    for (const x of [0.15, 2.05, 3.95, 5.85]) b.box('metal', '#8b98a1', 0.05, 0.95, 0.05, x, 0, 1.15);
-    for (let i = 0; i < 2; i++) b.box('metal', '#a6b1b8', 5.8, 0.04, 0.34, 3.0, 0.42 + i * 0.44, 1.12);
-    for (let i = 0; i < 14; i++) {
-      const lvl = i % 2, col = Math.floor(i / 2);
-      if (hash(i) < 0.18) continue;
-      const kraft = ['#c99a62', '#d9b07c', '#b8875a', '#cfa36a'][i % 4];
-      const w = 0.42 + hash(i + 3) * 0.24, h = 0.22 + hash(i + 9) * 0.12;
-      b.box('paint', kraft, w, h, 0.28, 0.45 + col * 0.82 + (hash(i + 5) - 0.5) * 0.15, 0.46 + lvl * 0.44, 1.11);
-      b.box('paint', '#f4ead8', w * 0.5, 0.025, 0.285, 0.45 + col * 0.82 + (hash(i + 5) - 0.5) * 0.15, 0.46 + lvl * 0.44 + h * 0.55, 1.11);
-    }
-    // Bacs colorés
-    for (const [x, col] of [[0.6, '#3a7bd5'], [1.35, '#2bb673']]) b.box('satin', col, 0.5, 0.24, 0.32, x, 0.03, 1.12);
+    // (V1.4 : plus de racks muraux ni de cartons décoratifs : seuls les vrais cartons sont dans la réserve)
 
     // Murs latéraux : soubassement, vitres, chapeau en bois
     for (const x of [-0.12, COLS + 0.12]) {
@@ -471,32 +471,8 @@ export class Renderer3D {
     }
     b.add('metal', G('torus'), '#2b3036', { x: COLS - 0.3, y: 0.3, z: ROWS - 1.35, sx: 0.28, sy: 0.28, sz: 0.28 });
 
-    // Bureau : plateau bois, tiroirs, écran, clavier, lampe, chaise, plante
-    const bx = COMPUTER.tiles[0].c + 1, bz = COMPUTER.tiles[0].r + 0.45;
-    b.box('satin', '#c48f5e', 1.9, 0.07, 0.7, bx, 0.69, bz);
-    b.box('paint', '#8a5e3c', 0.06, 0.69, 0.62, bx - 0.88, 0, bz);
-    b.box('paint', '#9f6c45', 0.5, 0.69, 0.62, bx + 0.66, 0, bz);
-    for (const y of [0.12, 0.36]) b.box('satin', '#d9a878', 0.44, 0.2, 0.02, bx + 0.66, y, bz + 0.31);
-    b.box('satin', '#2b3036', 0.66, 0.44, 0.05, bx + 0.25, 0.86, bz - 0.12);
-    b.box('satin', '#2b3036', 0.08, 0.16, 0.08, bx + 0.25, 0.76, bz - 0.12);
-    b.box('satin', '#3c4248', 0.42, 0.02, 0.15, bx + 0.2, 0.76, bz + 0.12);
-    b.box('satin', '#e9edf0', 0.08, 0.02, 0.11, bx + 0.52, 0.76, bz + 0.13);
-    b.add('metal', G('cyl8'), '#2b3036', { x: bx - 0.6, y: 0.95, z: bz - 0.15, rz: 0.4, sx: 0.025, sy: 0.4, sz: 0.025 });
-    b.add('satin', G('cone'), '#ff8a3d', { x: bx - 0.5, y: 1.15, z: bz - 0.15, rz: -0.5, sx: 0.16, sy: 0.14, sz: 0.16 });
-    b.add('metal', G('cyl'), '#2b3036', { x: bx - 0.65, y: 0.77, z: bz - 0.15, sx: 0.14, sy: 0.02, sz: 0.14 });
-    plant(bx - 0.72, bz + 0.16, 0.5, 0.76);
-    b.box('paint', '#2d7a73', 0.42, 0.06, 0.4, bx + 0.2, 0.4, bz + 0.3);
-    b.box('paint', '#2d7a73', 0.42, 0.36, 0.06, bx + 0.2, 0.44, bz + 0.5);
-    b.add('metal', G('cyl8'), '#4b555c', { x: bx + 0.2, y: 0.2, z: bz + 0.3, sx: 0.05, sy: 0.4, sz: 0.05 });
     this.addBatch(b, s);
-    this.pickBox(1.9, 1.2, 0.8, bx, 0, bz, { r: COMPUTER.tiles[0].r, c: COMPUTER.tiles[0].c }, s);
-    for (const d of DELIVERY_SPOTS) this.pickBox(0.9, 1.5, 0.9, d.c + 0.5, 0, d.r + 0.5, { r: d.r, c: d.c }, s);
-
-    // Écran de l'ordinateur (lueur animée)
-    this.screenMat = new T.MeshStandardMaterial({ color: '#6edcc8', emissive: '#3fbfa8', emissiveIntensity: 0.8, roughness: 0.4 });
-    const scr = new T.Mesh(new T.BoxGeometry(0.58, 0.36, 0.01), this.screenMat);
-    scr.position.set(bx + 0.25, 1.08, bz - 0.09);
-    s.add(scr);
+    // (V1.4 : bureau et ordinateur retirés, on commande avec le bouton « Commander » ; la place sert à la réserve)
 
     // Enseigne, panneau RÉSERVE, affiche promo, horloge
     s.add(this.plane(7.6, 1.5, this.canvasTex(1024, 202, (c, w, h) => {
@@ -575,7 +551,7 @@ export class Renderer3D {
 
     // Sol de la boutique : carrelage chaud, joints, flaques de lumière des plafonniers, marquages
     const px = 96;
-    const rows = ROWS - 3;
+    const rows = ROWS - SHOP_TOP;
     const floorTex = this.canvasTex(COLS * px, rows * px, (c, w, h) => {
       for (let r = 0; r < rows; r++) for (let col = 0; col < COLS; col++) {
         const v = hash(r * 13 + col * 7) * 0.05;
@@ -591,7 +567,7 @@ export class Renderer3D {
       for (let r = 0; r <= rows; r++) { c.beginPath(); c.moveTo(0, r * px); c.lineTo(w, r * px); c.stroke(); }
       for (let col = 0; col <= COLS; col++) { c.beginPath(); c.moveTo(col * px, 0); c.lineTo(col * px, h); c.stroke(); }
       // Lumière des plafonniers
-      for (const [cx, cy] of [[2.2, 1.6], [6.8, 1.6], [2.2, 4.6], [6.8, 4.6], [4.5, 7.6], [1.6, 9.3], [7.4, 9.3]]) {
+      for (const [cx, cy] of [[2.2, 0.8], [6.8, 0.8], [2.2, 3.8], [6.8, 3.8], [4.5, 6.6], [1.6, 8.3], [7.4, 8.3]]) {
         const grd = c.createRadialGradient(cx * px, cy * px, 0, cx * px, cy * px, px * 2.4);
         grd.addColorStop(0, 'rgba(255,248,225,0.55)');
         grd.addColorStop(1, 'rgba(255,248,225,0)');
@@ -609,7 +585,7 @@ export class Renderer3D {
       // Allées verrouillées
       for (const z of ZONES) {
         if (st.zones.includes(z.id)) continue;
-        const x = px, y = (z.row - 3) * px - px * 0.1, ww = px * 7, hh = px * 1.2;
+        const x = px, y = (z.row - SHOP_TOP) * px - px * 0.1, ww = px * 7, hh = px * 1.2;
         c.save();
         rr2(c, x, y, ww, hh, 18); c.clip();
         c.fillStyle = 'rgba(60,50,40,0.07)'; c.fillRect(x, y, ww, hh);
@@ -626,7 +602,7 @@ export class Renderer3D {
       // Emplacements libres : « + »
       for (const sl of SHELF_SLOTS) {
         if (!st.zones.includes(sl.zone) || st.shelves.some((x) => x.slot === sl.id)) continue;
-        const x0 = sl.c * px, y0 = (sl.r - 3) * px;
+        const x0 = sl.c * px, y0 = (sl.r - SHOP_TOP) * px;
         c.fillStyle = 'rgba(45,122,115,0.08)';
         rr2(c, x0 + 10, y0 + 10, px - 20, px - 20, 14); c.fill();
         c.strokeStyle = 'rgba(45,122,115,0.55)'; c.lineWidth = 4; c.setLineDash([12, 9]);
@@ -639,7 +615,7 @@ export class Renderer3D {
       }
       for (const reg of REGISTERS) {
         if (st.registers.includes(reg.id)) continue;
-        const x = reg.counter[0].c * px, y = (reg.counter[0].r - 3) * px;
+        const x = reg.counter[0].c * px, y = (reg.counter[0].r - SHOP_TOP) * px;
         c.strokeStyle = 'rgba(45,122,115,0.45)'; c.lineWidth = 4; c.setLineDash([12, 9]);
         rr2(c, x + 8, y + 8, px * 2 - 16, px - 16, 12); c.stroke(); c.setLineDash([]);
         c.fillStyle = 'rgba(45,122,115,0.75)'; c.font = `800 ${px * 0.24}px ${FONT3}`;
@@ -650,12 +626,12 @@ export class Renderer3D {
       for (const reg of REGISTERS) {
         if (!st.registers.includes(reg.id)) continue;
         c.fillStyle = 'rgba(255,138,61,0.22)';
-        for (const t of [reg.pay, ...reg.queue.slice(0, 2)]) { rr2(c, t.c * px + 26, (t.r - 3) * px + 26, px - 52, px - 52, 10); c.fill(); }
+        for (const t of [reg.pay, ...reg.queue.slice(0, 2)]) { rr2(c, t.c * px + 26, (t.r - SHOP_TOP) * px + 26, px - 52, px - 52, 10); c.fill(); }
       }
     });
     const floor = new T.Mesh(new T.PlaneGeometry(COLS, rows), new T.MeshStandardMaterial({ map: floorTex, roughness: 0.38, metalness: 0.02 }));
     floor.rotation.x = -Math.PI / 2;
-    floor.position.set(COLS / 2, 0, 3 + rows / 2);
+    floor.position.set(COLS / 2, 0, SHOP_TOP + rows / 2);
     floor.receiveShadow = true;
     floor.userData.ownTex = true;
     this.world.add(floor);
@@ -812,20 +788,33 @@ export class Renderer3D {
   }
 
   // ---------------------------------------------------------------- cartons de la réserve
-  cartonMat(pid) {
-    const k = `carton:${pid}`;
+  // V1.4 : le NOM du produit est écrit en gros sur la face avant ET sur le dessus du carton (le dessus est la
+  // face la plus visible avec la caméra en plongée), avec l'icône et la couleur du produit.
+  cartonMat(pid, face) {
+    const k = `carton:${pid}:${face}`;
     let m = this.mats.get(k);
     if (!m) {
       const p = PRODUCT_BY_ID[pid];
-      const tex = this.canvasTex(128, 128, (c) => {
-        c.fillStyle = '#c99a62'; c.fillRect(0, 0, 128, 128);
-        c.fillStyle = 'rgba(120,80,40,0.25)';
-        for (let i = 0; i < 6; i++) c.fillRect(0, 10 + i * 20, 128, 2);
-        c.fillStyle = '#e8d3a8'; c.fillRect(56, 0, 16, 128);
-        c.fillStyle = '#ffffff'; rr2(c, 20, 26, 88, 76, 12); c.fill();
-        c.drawImage(this.iconCanvas(p, 96), 30, 24, 68, 68);
-        c.fillStyle = p.color; c.fillRect(20, 90, 88, 12);
+      const tex = this.canvasTex(256, face === 'top' ? 208 : 150, (c, w, h) => {
+        c.fillStyle = face === 'top' ? '#d9b07c' : '#c99a62'; c.fillRect(0, 0, w, h);
+        c.fillStyle = 'rgba(120,80,40,0.22)';
+        for (let i = 0; i < 6; i++) c.fillRect(0, 8 + i * 26, w, 2);
+        const pad = 10;
+        c.fillStyle = '#ffffff'; rr2(c, pad, pad, w - pad * 2, h - pad * 2, 16); c.fill();
+        c.fillStyle = p.color; rr2(c, pad, pad, 16, h - pad * 2, 8); c.fill();
+        c.fillStyle = p.color; c.fillRect(pad + 8, pad, 8, h - pad * 2);
+        const ic = Math.min(h - pad * 2 - 8, 76);
+        c.drawImage(this.iconCanvas(p, 128), pad + 20, (h - ic) / 2, ic, ic);
+        // nom : le plus gros possible dans la place restante
+        const x0 = pad + 26 + ic;
+        const maxW = w - x0 - pad - 6;
+        let fs = 64;
+        c.font = `800 ${fs}px ${FONT3}`;
+        while (fs > 26 && c.measureText(p.short).width > maxW) { fs -= 2; c.font = `800 ${fs}px ${FONT3}`; }
+        c.fillStyle = '#1d2b30'; c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText(p.short, x0 + maxW / 2, h / 2 + 3);
       });
+      tex.anisotropy = 8;
       m = new this.T3.MeshStandardMaterial({ map: tex, roughness: 0.85 });
       this.mats.set(k, m);
     }
@@ -835,9 +824,7 @@ export class Renderer3D {
   cartonMesh(pid) {
     const T = this.T3;
     const plain = this.mat('#c99a62', { rough: 0.9 });
-    const top = this.mat('#d9b07c', { rough: 0.9 });
-    const lab = this.cartonMat(pid);
-    const m = new T.Mesh(this.cartonGeo || (this.cartonGeo = new T.BoxGeometry(0.62, 0.36, 0.5)), [plain, plain, top, plain, lab, plain]);
+    const m = new T.Mesh(this.cartonGeo || (this.cartonGeo = new T.BoxGeometry(0.62, 0.36, 0.5)), [plain, plain, this.cartonMat(pid, 'top'), plain, this.cartonMat(pid, 'front'), plain]);
     m.castShadow = true;
     m.receiveShadow = true;
     return m;
@@ -849,15 +836,19 @@ export class Renderer3D {
     if (key === this.deliveryKey) return;
     this.deliveryKey = key;
     for (const m of this.cartonMeshes) this.scene.remove(m);
+    this.pickables = this.pickables.filter((m) => !this.cartonMeshes.includes(m));
     this.cartonMeshes = [];
     st.delivery.forEach((stack, i) => {
       const d = DELIVERY_SPOTS[i];
+      const pallet = AUTO_SPOTS.includes(i) ? 0.09 : 0;
       stack.forEach((c, k) => {
         const m = this.cartonMesh(c.product);
-        m.position.set(d.c + 0.5 + (hash(i * 5 + k) - 0.5) * 0.06, 0.27 + k * 0.37, d.r + 0.5);
-        m.rotation.y = (hash(i * 3 + k * 7) - 0.5) * 0.14;
+        m.position.set(d.c + 0.5 + (hash(i * 5 + k) - 0.5) * 0.04, pallet + 0.18 + k * 0.37, d.r + 0.5);
+        m.rotation.y = (hash(i * 3 + k * 7) - 0.5) * 0.08;
+        m.userData = { tile: { r: d.r, c: d.c } };
         this.scene.add(m);
         this.cartonMeshes.push(m);
+        this.pickables.push(m);
       });
     });
   }
@@ -872,6 +863,7 @@ export class Renderer3D {
     let pants = pantsList[id % pantsList.length];
     let style = look.hairStyle ?? 0;
     if (kind === 'player') { shirt = '#2d7a73'; skin = '#f0c29e'; hair = '#3b2a1e'; pants = '#2f3a44'; style = 0; }
+    // Personnel (V1.4) : apparence fixe, tirée de sa fiche (staffLook), jamais de l'identifiant d'affichage.
     if (kind === 'stocker') { shirt = '#f08a24'; pants = '#2f3a44'; }
     if (kind === 'cashier') { shirt = '#d6336c'; pants = '#2f3a44'; }
     const shoe = '#2a2d31';
@@ -1135,7 +1127,8 @@ export class Renderer3D {
 
   // Centre d'une case à l'écran (px CSS), à mi-hauteur des objets : sert à viser juste au doigt.
   tileScreen(r, c) {
-    const y = r <= 1 ? 0.8 : 0.45;
+    const n = r < SHOP_TOP && this.game.state.delivery[(r - 1) * COLS + c] ? this.game.state.delivery[(r - 1) * COLS + c].length : 0;
+    const y = r < SHOP_TOP ? 0.15 + n * 0.3 : 0.45;
     return this.toScreen(c + 0.5, y, r + 0.5);
   }
 
@@ -1224,20 +1217,17 @@ export class Renderer3D {
     if (Math.abs(want - this.shift) < 0.5) this.shift = want;
     this.placeCamera(this.shift);
 
-    // Écran de l'ordinateur : pulse pendant une livraison
-    this.screenMat.emissiveIntensity = st.pending.length ? 0.6 + 0.5 * Math.sin(this.time * 6) : 0.8;
-
     // Personnages
     for (const o of this.agentObjs.values()) o.userData.seen = false;
     this.syncAgent('player', g.player, 'player');
-    if (g.stocker) this.syncAgent(`stocker-${g.stocker.id}`, g.stocker, 'stocker');
+    for (const a of g.staffAgents()) this.syncAgent(`stocker-${a.id}`, a, 'stocker');
     for (const cu of g.customers) this.syncAgent(`c${cu.id}`, cu, 'customer');
     for (const [regId, member] of g.cashierAssignments()) {
       const reg = REGISTERS.find((x) => x.id === regId);
       const q = g.queues.get(regId) || [];
       const first = q.length && g.customers.find((x) => x.id === q[0]);
       const scanning = !!(first && first.processing);
-      this.syncAgent(`cashier-${regId}`, { x: reg.staff.c, y: reg.staff.r - 0.1, dir: -1, id: regId + (member.look || 0) * 3, path: [], scanning, look: { hairStyle: (member.look || 0) % 3, hair: ['#a8642e', '#2b1d14', '#e6c068', '#5a3a22', '#1f1f1f', '#c0462b'][(member.look || 0) % 6], skin: ['#f6d3b3', '#c98d63', '#e8b48f', '#9c6644', '#f1c7a5', '#6f4a33'][(member.look || 0) % 6] } }, 'cashier');
+      this.syncAgent(`cashier-${regId}-${member.id}`, { x: reg.staff.c, y: reg.staff.r - 0.1, dir: -1, id: regId, path: [], scanning, look: staffLook(member) }, 'cashier');
     }
     for (const [k, o] of this.agentObjs) {
       if (!o.userData.seen) {
@@ -1260,6 +1250,17 @@ export class Renderer3D {
     ctx.clearRect(0, 0, this.w, this.h);
     const unit = this.toScreen(1, 0, 0).x - this.toScreen(0, 0, 0).x; // pixels par case
     const fs = (k) => Math.max(9, Math.round(unit * k));
+
+    // V1.4 : nom du produit sur le fronton de chaque étagère (toujours lisible, par-dessus la 3D)
+    for (const sh of st.shelves) {
+      const sl = SHELF_SLOTS.find((x) => x.id === sh.slot);
+      if (!sl) continue;
+      // un peu sous le fronton : ne chevauche jamais l'étiquette de prix du rayon de devant (allée 1 / allée 2)
+      const pt = this.toScreen(sl.c + 0.5, 1.42, sl.r + 0.32);
+      this.shelfSign(ctx, pt.x, pt.y, sh.product ? PRODUCT_BY_ID[sh.product] : null, unit);
+    }
+    // V1.4 : nom des cartons de la réserve, une étiquette par pile (même derrière une étagère ou empilés)
+    this.stackLabels(ctx, unit);
 
     // Étiquettes de prix (jaune « PROMO » quand le prix est bas)
     for (const sh of st.shelves) {
@@ -1304,11 +1305,7 @@ export class Renderer3D {
       }
     }
 
-    // Tutoriel : anneaux qui pulsent
-    if (st.tutorial === 0) {
-      const pt = this.toScreen(COMPUTER.tiles[0].c + 1, 0.9, COMPUTER.tiles[0].r + 0.4);
-      this.pulse(ctx, pt.x, pt.y, unit * 0.9);
-    }
+    // Tutoriel : anneau qui pulse sur un carton à prendre
     if (st.tutorial === 1 && !g.player.carry) {
       const i = st.delivery.findIndex((x) => x.length);
       if (i >= 0) {
@@ -1398,6 +1395,52 @@ export class Renderer3D {
       ctx.beginPath(); ctx.arc(rp.x, rp.y, 6 + k * unit * 0.6, 0, Math.PI * 2); ctx.stroke();
     }
     this.ripples = this.ripples.filter((r) => r.t < 0.45);
+  }
+
+  // Panneau du fronton : nom court du produit sur sa couleur (« libre » pour une étagère sans produit).
+  shelfSign(ctx, x, y, p, unit) {
+    const label = p ? p.short : 'libre';
+    const fsz = Math.max(10, Math.round(unit * 0.25));
+    ctx.font = `800 ${fsz}px ${FONT3}`;
+    const tw = Math.min(unit * 0.98, ctx.measureText(label).width + 10);
+    const th = fsz + 5;
+    ctx.fillStyle = p ? p.color : 'rgba(154,167,176,0.95)';
+    rr2(ctx, x - tw / 2, y - th / 2, tw, th, th / 2.4); ctx.fill();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.stroke();
+    ctx.fillStyle = p && luminance(p.color) > 0.62 ? '#1d2b30' : '#ffffff';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(label, x, y + 1, tw - 6);
+  }
+
+  // Étiquette du nom sur chaque carton de la réserve, posée sur sa face avant, à sa hauteur dans la pile :
+  // lisible même empilé ou juste derrière une étagère (dessinée par-dessus la 3D).
+  stackLabels(ctx, unit) {
+    const st = this.game.state;
+    const fsz = Math.max(9, Math.round(unit * 0.19));
+    ctx.font = `800 ${fsz}px ${FONT3}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const lh = fsz + 3;
+    st.delivery.forEach((stack, i) => {
+      if (!stack.length) return;
+      const d = DELIVERY_SPOTS[i];
+      const pallet = AUTO_SPOTS.includes(i) ? 0.09 : 0;
+      let prevY = Infinity;
+      for (let k = 0; k < stack.length; k++) {
+        const p = PRODUCT_BY_ID[stack[k].product];
+        const pt = this.toScreen(d.c + 0.5, pallet + 0.18 + k * 0.37, d.r + 0.76);
+        const y = Math.min(pt.y, prevY - lh); // jamais deux étiquettes l'une sur l'autre
+        prevY = y;
+        const label = p.short;
+        const tw = Math.min(unit * 0.98, ctx.measureText(label).width + 12);
+        ctx.fillStyle = 'rgba(255,255,255,0.95)';
+        rr2(ctx, pt.x - tw / 2, y - lh / 2, tw, lh - 1, (lh - 1) / 2); ctx.fill();
+        ctx.fillStyle = p.color;
+        rr2(ctx, pt.x - tw / 2, y - lh / 2, 5, lh - 1, 2.5); ctx.fill();
+        ctx.fillStyle = '#1d2b30';
+        ctx.fillText(label, pt.x + 2, y, tw - 10);
+      }
+    });
   }
 
   pulse(ctx, x, y, rad, rgb = '255,138,61') {

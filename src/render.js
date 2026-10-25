@@ -1,5 +1,5 @@
 // Rendu Canvas 2D haute définition : magasin vu de dessus en légère perspective.
-import { COLS, ROWS, DELIVERY_SPOTS, COMPUTER, ZONES, SHELF_SLOTS, SHELF_CAPACITY, REGISTERS, PRODUCT_BY_ID, PRODUCTS, DOOR, STAFF } from './data.js';
+import { COLS, ROWS, DELIVERY_SPOTS, ZONES, SHELF_SLOTS, SHELF_CAPACITY, REGISTERS, PRODUCT_BY_ID, PRODUCTS, DOOR, STAFF, SHOP_TOP, AUTO_SPOTS, staffLook } from './data.js';
 
 const FONT = '"Baloo 2", "Nunito", system-ui, sans-serif';
 
@@ -19,6 +19,11 @@ function rr(ctx, x, y, w, h, r) {
   ctx.arcTo(x, y + h, x, y, rad);
   ctx.arcTo(x, y, x + w, y, rad);
   ctx.closePath();
+}
+
+function luminance(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
 }
 
 function shade(hex, amt) {
@@ -209,7 +214,7 @@ export class Renderer {
     ctx.fillRect(0, 0, this.w, this.h);
 
     // Sol de la boutique : carrelage
-    for (let r = 3; r < 14; r++) {
+    for (let r = SHOP_TOP; r < 14; r++) {
       for (let c = 0; c < COLS; c++) {
         ctx.fillStyle = (r + c) % 2 ? '#f6f0e4' : '#e9e1d1';
         ctx.fillRect(X(c), Y(r), T + 0.5, T + 0.5);
@@ -218,8 +223,8 @@ export class Renderer {
     // Joints discrets
     ctx.strokeStyle = 'rgba(120,96,70,0.14)';
     ctx.lineWidth = 1;
-    for (let r = 3; r <= 14; r++) { ctx.beginPath(); ctx.moveTo(X(0), Y(r)); ctx.lineTo(X(COLS), Y(r)); ctx.stroke(); }
-    for (let c = 0; c <= COLS; c++) { ctx.beginPath(); ctx.moveTo(X(c), Y(3)); ctx.lineTo(X(c), Y(14)); ctx.stroke(); }
+    for (let r = SHOP_TOP; r <= 14; r++) { ctx.beginPath(); ctx.moveTo(X(0), Y(r)); ctx.lineTo(X(COLS), Y(r)); ctx.stroke(); }
+    for (let c = 0; c <= COLS; c++) { ctx.beginPath(); ctx.moveTo(X(c), Y(SHOP_TOP)); ctx.lineTo(X(c), Y(14)); ctx.stroke(); }
     // Reflets des néons au plafond
     for (const [cx, cy] of [[2.5, 5], [6.5, 5], [2.5, 9.5], [6.5, 9.5], [4.5, 12.5]]) {
       const grd = ctx.createRadialGradient(X(cx), Y(cy), 0, X(cx), Y(cy), T * 2.6);
@@ -230,23 +235,28 @@ export class Renderer {
     }
 
     // Réserve : béton + ligne de sécurité
+    const RH = SHOP_TOP - 1;
     ctx.fillStyle = '#c9cbc4';
-    ctx.fillRect(X(0), Y(1), T * COLS, T * 2);
+    ctx.fillRect(X(0), Y(1), T * COLS, T * RH);
     ctx.fillStyle = 'rgba(0,0,0,0.04)';
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 60; i++) {
       ctx.beginPath();
-      ctx.arc(X(0) + ((i * 97) % (T * COLS)), Y(1) + ((i * 53) % (T * 2)), 1 + (i % 3), 0, Math.PI * 2);
+      ctx.arc(X(0) + ((i * 97) % (T * COLS)), Y(1) + ((i * 53) % (T * RH)), 1 + (i % 3), 0, Math.PI * 2);
       ctx.fill();
     }
+    // Grille de la réserve (chaque case peut recevoir une pile) et palettes
+    ctx.strokeStyle = 'rgba(80,70,55,0.12)';
+    ctx.lineWidth = 1;
+    for (let r = 1; r <= SHOP_TOP; r++) { ctx.beginPath(); ctx.moveTo(X(0), Y(r)); ctx.lineTo(X(COLS), Y(r)); ctx.stroke(); }
+    for (let c = 0; c <= COLS; c++) { ctx.beginPath(); ctx.moveTo(X(c), Y(1)); ctx.lineTo(X(c), Y(SHOP_TOP)); ctx.stroke(); }
     ctx.fillStyle = '#f2c230';
-    ctx.fillRect(X(0), Y(3) - 3, T * COLS, 3);
+    ctx.fillRect(X(0), Y(SHOP_TOP) - 3, T * COLS, 3);
     ctx.fillStyle = '#2c2c2c';
-    for (let x = X(0); x < X(COLS); x += 12) ctx.fillRect(x, Y(3) - 3, 6, 3);
-    // Marquage au sol des emplacements de livraison
+    for (let x = X(0); x < X(COLS); x += 12) ctx.fillRect(x, Y(SHOP_TOP) - 3, 6, 3);
     ctx.strokeStyle = 'rgba(242,194,48,0.9)';
     ctx.lineWidth = 1.5;
     ctx.setLineDash([4, 3]);
-    for (const d of DELIVERY_SPOTS) { rr(ctx, X(d.c) + 3, Y(d.r) + 3, T - 6, T - 6, 4); ctx.stroke(); }
+    for (const i of AUTO_SPOTS) { const d = DELIVERY_SPOTS[i]; rr(ctx, X(d.c) + 3, Y(d.r) + 3, T - 6, T - 6, 4); ctx.stroke(); }
     ctx.setLineDash([]);
 
     // Mur du fond
@@ -262,15 +272,6 @@ export class Renderer {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillText('RÉSERVE', X(0) + T * 0.2, Y(0) + T * 0.4);
-
-    // Bureau + ordinateur
-    const cx0 = X(COMPUTER.tiles[0].c), cy0 = Y(COMPUTER.tiles[0].r);
-    ctx.fillStyle = 'rgba(0,0,0,0.15)';
-    rr(ctx, cx0 + 2, cy0 + T * 0.35 + 4, T * 2 - 4, T * 0.62, 6); ctx.fill();
-    ctx.fillStyle = '#9a6b45';
-    rr(ctx, cx0 + 2, cy0 + T * 0.3, T * 2 - 4, T * 0.6, 6); ctx.fill();
-    ctx.fillStyle = '#b8845a';
-    rr(ctx, cx0 + 2, cy0 + T * 0.3, T * 2 - 4, T * 0.22, 6); ctx.fill();
 
     // Façade + porte
     ctx.fillStyle = '#1f5c5a';
@@ -356,38 +357,20 @@ export class Renderer {
     ctx.drawImage(this.static, 0, -Math.round(sh * this.dpr));
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, -Math.round(sh * this.dpr));
 
-    // Écran de l'ordinateur (lueur si livraison en cours)
-    {
-      const x = X(COMPUTER.tiles[0].c) + T * 0.55, y = Y(1) - T * 0.05;
-      ctx.fillStyle = '#2b3036';
-      rr(ctx, x, y, T * 0.9, T * 0.55, 4); ctx.fill();
-      const glow = s.pending.length ? 0.6 + 0.4 * Math.sin(this.time * 5) : 0.7;
-      ctx.fillStyle = `rgba(110,220,200,${glow})`;
-      rr(ctx, x + 3, y + 3, T * 0.9 - 6, T * 0.55 - 8, 3); ctx.fill();
-      ctx.fillStyle = '#2b3036';
-      ctx.fillRect(x + T * 0.4, y + T * 0.55, T * 0.1, T * 0.12);
-      ctx.fillStyle = '#fff';
-      ctx.font = `700 ${Math.round(T * 0.22)}px ${FONT}`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(s.pending.length ? `🚚 ${s.pending.length}` : '🛒', x + T * 0.45, y + T * 0.25);
-      if (s.tutorial === 0) this.pulseRing(X(7) + T, Y(1) + T * 0.5, T * 0.95);
-    }
-
-    // Cartons de la réserve
-    for (let i = 0; i < DELIVERY_SPOTS.length; i++) {
-      const st = s.delivery[i];
-      const d = DELIVERY_SPOTS[i];
-      for (let k = 0; k < st.length; k++) this.drawCarton(X(d.c) + T * 0.5, Y(d.r) + T * 0.78 - k * T * 0.2, T * 0.72, st[k]);
-      if (st.length && s.tutorial === 1 && !g.player.carry) this.pulseRing(X(d.c) + T * 0.5, Y(d.r) + T * 0.5, T * 0.55);
-    }
-
-    // Rangs : étagères, comptoirs et personnages triés par profondeur.
-    const agents = [g.player, ...g.customers];
-    if (g.stocker) agents.push(g.stocker);
+    // Rangs : cartons, étagères, comptoirs et personnages triés par profondeur.
+    const agents = [g.player, ...g.customers, ...g.staffAgents()];
+    let pulsed = false;
     const cashierRegs = [...g.cashierAssignments().keys()].map((id) => REGISTERS.find((r) => r.id === id));
     const carry = g.player.carry;
     for (let r = 1; r < ROWS; r++) {
+      for (let i = 0; i < DELIVERY_SPOTS.length; i++) {
+        const d = DELIVERY_SPOTS[i];
+        const st = s.delivery[i];
+        if (d.r !== r || !st.length) continue;
+        // Cartons empilés en décalé : le nom de chacun reste visible (le carton du dessus est entier).
+        for (let k = 0; k < st.length; k++) this.drawCarton(X(d.c) + T * 0.5, Y(d.r) + T * 0.86 - k * T * 0.3, T * 0.86, st[k], true, false);
+        if (!pulsed && s.tutorial === 1 && !g.player.carry) { pulsed = true; this.pulseRing(X(d.c) + T * 0.5, Y(d.r) + T * 0.5, T * 0.55); }
+      }
       for (const sh of s.shelves) {
         const sl = SHELF_SLOTS.find((x) => x.id === sh.slot);
         if (sl.r === r) this.drawShelf(sl, sh, carry);
@@ -395,7 +378,7 @@ export class Renderer {
       for (const reg of REGISTERS) {
         if (s.registers.includes(reg.id) && reg.counter[0].r === r) this.drawRegister(reg);
       }
-      for (const cr of cashierRegs) if (cr.staff.r === r) this.drawPerson(cr.staff.c, cr.staff.r, { kind: 'cashier', dir: -1, walk: 0 });
+      for (const cr of cashierRegs) if (cr.staff.r === r) this.drawPerson(cr.staff.c, cr.staff.r, { kind: 'cashier', dir: -1, walk: 0, look: staffLook(g.cashierAt(cr.id)) });
       for (const a of agents) {
         if (Math.round(a.y) === r) this.drawPerson(a.x, a.y, a);
       }
@@ -501,29 +484,51 @@ export class Renderer {
     ctx.beginPath(); ctx.arc(x, y, rad * (0.8 + k * 0.5), 0, Math.PI * 2); ctx.stroke();
   }
 
-  drawCarton(cx, by, w, carton) {
+  // Carton vu de face, avec l'icône ET le nom du produit (V1.4). « named » : écrire le nom (carton du dessus).
+  drawCarton(cx, by, w, carton, named = true, compact = false) {
     const ctx = this.ctx;
     const p = PRODUCT_BY_ID[carton.product];
-    const h = w * 0.62;
+    const h = w * 0.56;
     const x = cx - w / 2, y = by - h;
     ctx.fillStyle = 'rgba(0,0,0,0.16)';
     ctx.beginPath(); ctx.ellipse(cx, by, w * 0.5, w * 0.12, 0, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#c99a62';
     rr(ctx, x, y, w, h, 3); ctx.fill();
     ctx.fillStyle = '#dbb07a';
-    ctx.fillRect(x, y, w, h * 0.28);
-    ctx.fillStyle = 'rgba(120,80,40,0.35)';
-    ctx.fillRect(cx - w * 0.06, y, w * 0.12, h * 0.28);
+    ctx.fillRect(x, y, w, h * 0.22);
+    // étiquette blanche : bande de couleur, icône, nom
     ctx.fillStyle = '#fff';
-    rr(ctx, cx - w * 0.22, y + h * 0.36, w * 0.44, h * 0.52, 3); ctx.fill();
-    const ic = this.icon(p, Math.round(h * 0.5));
-    ctx.drawImage(ic, cx - h * 0.25, y + h * 0.37, h * 0.5, h * 0.5);
-    if (carton.qty < p.qty) {
-      ctx.fillStyle = '#2d7a73';
-      ctx.font = `800 ${Math.round(w * 0.2)}px ${FONT}`;
+    rr(ctx, x + w * 0.05, y + h * 0.28, w * 0.9, h * 0.64, 3); ctx.fill();
+    ctx.fillStyle = p.color;
+    ctx.fillRect(x + w * 0.05, y + h * 0.28, w * 0.06, h * 0.64);
+    const isz = h * 0.56;
+    ctx.drawImage(this.icon(p, Math.round(isz)), x + w * 0.12, y + h * 0.32, isz, isz);
+    if (named && compact) {
+      // carton à moitié caché par celui du dessus : le nom en haut de la face, sur toute la largeur
+      ctx.fillStyle = '#fff';
+      rr(ctx, x + w * 0.05, y + h * 0.04, w * 0.9, h * 0.44, 3); ctx.fill();
+      ctx.fillStyle = p.color;
+      ctx.fillRect(x + w * 0.05, y + h * 0.04, w * 0.06, h * 0.44);
+      ctx.font = `800 ${Math.max(7, Math.round(h * 0.32))}px ${FONT}`;
+      ctx.fillStyle = '#1d2b30';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(carton.qty, x + w * 0.85, y + h * 0.15);
+      ctx.fillText(p.short, cx + w * 0.03, y + h * 0.27, w * 0.8);
+    } else if (named) {
+      const fsz = Math.max(7, Math.round(h * 0.34));
+      ctx.font = `800 ${fsz}px ${FONT}`;
+      ctx.fillStyle = '#1d2b30';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const tx0 = x + w * 0.14 + isz;
+      ctx.fillText(p.short, (tx0 + x + w * 0.93) / 2, y + h * 0.61, x + w * 0.93 - tx0);
+    }
+    if (carton.qty < p.qty) {
+      ctx.fillStyle = '#2d7a73';
+      ctx.font = `800 ${Math.round(w * 0.18)}px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(carton.qty, x + w * 0.88, y + h * 0.12);
     }
   }
 
@@ -549,11 +554,18 @@ export class Renderer {
     ctx.fillStyle = '#cfd6dc';
     ctx.fillRect(x, top, 3, h);
     ctx.fillRect(x + w - 3, top, 3, h);
-    // Fronton coloré
+    // Fronton coloré avec le nom du produit (V1.4)
     const p = sh.product ? PRODUCT_BY_ID[sh.product] : null;
     ctx.fillStyle = p ? p.color : '#9aa7b0';
-    rr(ctx, x, top, w, h * 0.14, 5); ctx.fill();
-    ctx.fillRect(x, top + h * 0.08, w, h * 0.06);
+    rr(ctx, x, top, w, h * 0.16, 5); ctx.fill();
+    ctx.fillRect(x, top + h * 0.08, w, h * 0.08);
+    if (p) {
+      ctx.fillStyle = luminance(p.color) > 0.62 ? '#1d2b30' : '#ffffff';
+      ctx.font = `800 ${Math.max(8, Math.round(h * 0.12))}px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(p.short, x + w / 2, top + h * 0.085, w - 4);
+    }
     // Tablettes et produits
     const levels = 3;
     const inner = h * 0.72;
@@ -649,8 +661,8 @@ export class Renderer {
     let skin = look.skin || '#f1c7a5';
     let hair = look.hair || '#5a3a22';
     if (a.kind === 'player') { shirt = '#2d7a73'; skin = '#f0c29e'; hair = '#3b2a1e'; }
-    if (a.kind === 'stocker') { shirt = '#f08a24'; skin = '#c98d63'; hair = '#1f1f1f'; }
-    if (a.kind === 'cashier') { shirt = '#d6336c'; skin = '#f6d3b3'; hair = '#a8642e'; }
+    if (a.kind === 'stocker') shirt = '#f08a24';
+    if (a.kind === 'cashier') shirt = '#d6336c';
     const moving = a.path && a.path.length;
     const bob = moving ? Math.abs(Math.sin(a.walk * 6)) * 2 * s : 0;
     const step = moving ? Math.sin(a.walk * 6) * 3 * s : 0;
