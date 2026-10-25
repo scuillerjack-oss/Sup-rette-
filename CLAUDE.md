@@ -16,6 +16,10 @@ Jack laisse à Claude le contrôle de GitHub et l'autorise à fusionner ses Pull
 Chaque fusion publie automatiquement : le site https://scuillerjack-oss.github.io/Sup-rette-/ (`deploy.yml`)
 et l'APK de bêta https://github.com/scuillerjack-oss/Sup-rette-/releases/download/beta/superette-beta.apk (`android-apk.yml`).
 
+Depuis la V1.3 : service worker « réseau d'abord », `version.txt` publié et comparé par le jeu (`src/update.js`),
+version `numéro+commit` visible en jeu. Ne jamais remettre un service worker « cache d'abord » (c'est ce qui bloquait
+la bêta en V1.0). Toute sauvegarde de la partie passe par `createSaver` (`src/storage.js`).
+
 ## Interdits sans accord explicite de Jack, écrit dans la conversation
 - `git push --force`, `git reset --hard` sur une branche partagée, pousser directement sur `main`.
 - Supprimer une branche, un fichier de jeu ou un dépôt. Reconstruire le jeu « de zéro ».

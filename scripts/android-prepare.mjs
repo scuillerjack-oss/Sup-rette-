@@ -4,6 +4,8 @@
 // 2. Réécrit le nom de l'appli dans strings.xml en l'échappant : l'apostrophe de
 //    « Ma P'tite Supérette » doit être écrite \' sinon la compilation Android échoue.
 // 3. Copie les icônes de lancement (android-res/) par-dessus celles par défaut de Capacitor.
+// 4. (V1.3) Remplace MainActivity.java par scripts/natif/MainActivity.java : efface l'ancien service
+//    worker à la première ouverture d'un nouvel APK (la sauvegarde est gardée).
 //
 // Usage : node scripts/android-prepare.mjs
 import { readFileSync, writeFileSync, appendFileSync, cpSync, existsSync } from 'node:fs';
@@ -39,4 +41,9 @@ for (const name of ['app_name', 'title_activity_main']) {
 writeFileSync(stringsPath, strings);
 
 cpSync('android-res', `${APP}/src/main/res`, { recursive: true });
-console.log(`Android préparé : « ${appName} », version et signature de bêta branchées, icônes copiées.`);
+
+const { appId } = JSON.parse(readFileSync('capacitor.config.json', 'utf8'));
+const activity = `${APP}/src/main/java/${appId.replace(/\./g, '/')}/MainActivity.java`;
+if (!existsSync(activity)) throw new Error(`${activity} introuvable`);
+cpSync('scripts/natif/MainActivity.java', activity);
+console.log(`Android préparé : « ${appName} », version et signature de bêta branchées, icônes copiées, MainActivity V1.3.`);
