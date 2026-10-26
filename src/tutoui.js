@@ -88,6 +88,8 @@ export class TutoUI {
         const p = this.r.tileScreen(t.r, t.c);
         const rad = 26;
         rects.push({ x: cv.left + p.x - rad, y: cv.top + p.y - rad, w: rad * 2, h: rad * 2, kind: 'ring' });
+        // Zone à garder visible autour de la cible (étagère avec son panneau, pile de cartons) : la bulle l'évite.
+        rects.push({ x: cv.left + p.x - rad, y: cv.top + p.y - rad * 2.6, w: rad * 2, h: rad * 3.6, kind: 'keep' });
       }
     }
     return rects;
@@ -111,7 +113,7 @@ export class TutoUI {
     if (room) modal.style.setProperty('--ttroom', `${Math.round(this.box.offsetHeight + 14)}px`);
     const rects = this.targets();
     // Anneaux (au-dessus de tout, sans bloquer le doigt)
-    const html = rects.slice(0, 12).map((r) => `<i class="tt-mark ${r.kind}" style="left:${Math.round(r.x - 4)}px;top:${Math.round(r.y - 4)}px;width:${Math.round(r.w + 8)}px;height:${Math.round(r.h + 8)}px"></i>`).join('');
+    const html = rects.filter((r) => r.kind !== 'keep').slice(0, 12).map((r) => `<i class="tt-mark ${r.kind}" style="left:${Math.round(r.x - 4)}px;top:${Math.round(r.y - 4)}px;width:${Math.round(r.w + 8)}px;height:${Math.round(r.h + 8)}px"></i>`).join('');
     if (html !== this.marksHtml) {
       this.marksHtml = html;
       this.layer.innerHTML = html;

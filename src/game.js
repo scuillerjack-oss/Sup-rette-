@@ -80,7 +80,8 @@ export function cashReaction(err, noticed, who = 'player') {
     const th = cashThresholds(err.due ?? 0);
     const beyond = Math.max(0, err.amount - th.discreet) / 100; // pièces au-delà du seuil « inaperçu »
     // V1.5, zone 3 : au-delà du seuil de refus, le client refuse de payer (la vente est annulée).
-    if (err.amount > th.refuse) {
+    // (un caissier se trompe d'un article, il ne vole pas : son erreur reste en zone 2, jamais de refus — relecture)
+    if (err.amount > th.refuse && who !== 'cashier') {
       const loss = Math.min(CASH_ERRORS.refuseLossMax, CASH_ERRORS.refuseLoss + CASH_ERRORS.refuseLossPerCoin * (err.amount - th.refuse) / 100);
       return { rep: -Math.round(loss * 100) / 100, why: 'arnaque', mood: -1, bubble: '😡', refused: true, distrust: Math.max(1, beyond) };
     }

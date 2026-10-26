@@ -254,7 +254,7 @@ export const STEPS = [
   {
     id: 'card',
     title: 'Paiement par carte',
-    text: () => 'Client suivant : il paie par <b>carte</b>. Tape le montant <b>avec la virgule</b> (par exemple 2,00) puis <b>OK</b>. Attention : un tout petit écart en ta faveur peut passer inaperçu ; plus gros, le client le voit et la popularité baisse ; énorme (plus de la moitié du ticket, ou plus de 10 pièces), il <b>refuse de payer</b> et part furieux.',
+    text: () => 'Client suivant : il paie par <b>carte</b>. Tape le montant <b>avec la virgule</b> (par exemple 2,00) puis <b>OK</b>. Attention : un tout petit écart en ta faveur peut passer inaperçu ; plus gros, le client le voit et la popularité baisse ; énorme (environ la moitié du ticket, au moins 2 pièces et au plus 10), il <b>refuse de payer</b> et part furieux.',
     enter: (g, mem) => { g.nextPayment = 'card'; mem.served = g.state.stats.served + g.state.stats.angry; },
     done: (g, mem) => g.state.stats.served + g.state.stats.angry > (mem.served ?? 1) || ttDayOver(g),
     target: (g) => ({ dom: g.checkout && g.checkout.step === 'card' ? ['#checkout .terminal', '#checkout .keypad'] : g.checkout && g.checkout.step === 'scan' ? ['#checkout .belt .item:not(.done)'] : [], tiles: g.checkout || g.player.atRegister != null ? [] : [ttReg1.staff] })
@@ -278,7 +278,7 @@ export const STEPS = [
     title: 'Embaucher',
     text: () => `Touche <b>👥 Personnel</b> et embauche quelqu'un. <b>Caissier</b> (niveau ${STAFF.cashier.level}) : tient une caisse. <b>Magasinier</b> (niveau ${STAFF.stocker.level}) : range les cartons dans le rayon de leur produit. Plus d'<b>étoiles</b> : plus rapide, moins d'erreurs, plus cher. Contrat de <b>${CONTRACT_DAYS} journées</b> payé d'avance, à prolonger dans Personnel.`,
     done: (g) => g.state.staff.cashiers.length > 0 || !!g.state.staff.stocker,
-    enter: (g, mem) => { mem.gift = ttCoinsAtLeast(g, g.staffCost('stocker', 1) + cents(10)); },
+    enter: (g, mem) => { mem.gift = ttCoinsAtLeast(g, Math.max(g.staffCost('cashier', 1), g.staffCost('stocker', 1)) + cents(10)); },
     target: (g, ui) => {
       if (!ttSheetIs(ui, 'staff')) return { dom: ui.sheet ? ['[data-a="close"]'] : ['#btnStaff'] };
       return { dom: ['[data-a="hire"]:not([disabled])'] };

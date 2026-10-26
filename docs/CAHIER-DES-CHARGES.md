@@ -261,11 +261,13 @@ caisse qui encaisse 1 600 au lieu de 1,60). Rien de la V1.4 n'est retiré.
   chaque nuit. Seulement quand c'est toi qui encaisses : l'erreur d'un caissier n'en crée pas.
 - Rendu de monnaie : même règle (garder trop de monnaie = surfacturer). Trop rendu : le gain de popularité reste
   plafonné à +0,5 par client, et ça coûte les pièces rendues.
-- Caissiers : un article compté deux fois suit la même règle, y compris le refus.
-- **Simulation** (test permanent dans `tests/v15.test.mjs`) : le robot joue 6 parties de 8 jours sans rien acheter
-  d'autre que la marchandise, honnête ou en surfacturant chaque client. Pièces à la fin, en moyenne :
-  honnête 213 ; +1 pièce 91 ; +3 pièces −35 ; +5 pièces −50 ; +10 pièces −57. Le joueur honnête finit plus riche
-  dans les 6 parties, quel que soit l'écart.
+- Caissiers : un article compté deux fois suit la même règle (inaperçu ou remarqué, perte qui grandit avec
+  l'écart), mais **jamais de refus** : c'est une erreur au hasard de l'employé (10 % au niveau 1, 0 % à 5 étoiles),
+  le joueur ne peut ni la provoquer ni en profiter. Pas de méfiance du quartier non plus.
+- **Simulation** (test permanent dans `tests/v15.test.mjs`) : le robot joue 10 parties de 8 jours sans rien acheter
+  d'autre que la marchandise, honnête ou en surfacturant chaque client. Pièces à la fin (10 parties de 8 jours),
+  en moyenne : honnête 214 ; +0,10 par client 97 ; +0,20 89 ; +0,40 101 ; +1 pièce 91 ; +5 pièces −47 ;
+  +10 pièces −58. Le joueur honnête finit plus riche dans les 10 parties, quel que soit l'écart.
 
 **B. Code couleur des cartons (retour de Jack : les noms cachaient les cartons)**
 - Plus aucun nom écrit sur les cartons. Chaque produit a une **couleur d'étiquette** (`tag` dans `src/data.js`) :
@@ -317,9 +319,35 @@ caisse qui encaisse 1 600 au lieu de 1,60). Rien de la V1.4 n'est retiré.
 pas de tutoriel en cours). Nouvelles clés à part : `superette-tuto-save-v1` (partie d'essai) et `superette-tuto-v1`
 (tutoriel déjà proposé ? partie en cours = normale ou essai ?).
 
-**Vérifications** : VERIF_PLACEHOLDER
+**Vérifications** : 96 tests Node, dont 30 nouveaux (`tests/v15.test.mjs`) :
+- tutoriel : proposé au 1er lancement seulement, jamais imposé à un joueur qui a une partie ;
+  `superette-save-v1` identique avant, pendant et après ; quitter puis reprendre à la même étape ; recommencer ;
+  fin = partie d'essai effacée ; Nouvelle partie intacte ; stockage indisponible ;
+- tutoriel joué en entier au moteur (scénario fixe) ; textes contrôlés contre les vraies valeurs du code ;
+- blocages possibles : cartons rangés trop tôt, carton manquant, plus de pièces, journée finie sans caisse ;
+- code couleur : couleurs distinctes, aucun nom sur les cartons en 3D et en 2D, nom et couleur sur l'étagère ;
+- caisse : 1,60 avec « 1600 », 1,70, 2,00, 3,70, virgule et point, saisie bornée, perte qui grandit avec
+  l'écart, espèces, caissier, méfiance qui s'efface ; simulation tricheur contre honnête.
+Chrome mobile simulé (390×844, zones protégées simulées), en 3D puis en repli 2D, sur le parcours réel au doigt :
+proposition au 1er lancement → Passer → menu → Jouer → les 18 étapes → Quitter en route (partie normale
+retrouvée, clé identique) → Reprendre → fin → partie normale identique → Nouvelle partie au jour 1. Aucune erreur
+du jeu dans la console. Captures avant/après du code couleur.
+Deux relectures indépendantes. La 1re a trouvé 2 points bloquants, tous deux corrigés : l'étape « réserve » ne se
+validait pas si l'on avait déjà rangé les cartons, et l'on pouvait arriver sans pièces aux étapes d'achat.
+Elle a aussi relevé 6 points mineurs : 5 corrigés, et le 6e (reprise à la réouverture) est gardé exprès, voir
+les limites ci-dessous. La 2e relecture n'a rien trouvé de bloquant. Corrigé après elle : pièces offertes à
+l'étape Embaucher sur le prix du caissier (le plus cher des deux), texte des seuils de refus plus précis,
+erreurs de caissier jamais transformées en refus. La bulle du tutoriel évite aussi l'étagère et la pile visées,
+pas seulement l'anneau.
 
-**Limites connues** : LIMITES_PLACEHOLDER
+**Limites connues / à décider avec Jack** :
+- Si l'on ferme l'appli en plein tutoriel, elle se rouvre dans le tutoriel (la vraie partie reste gardée). On en
+  sort avec « Quitter ». Choix volontaire : on retrouve où on en était.
+- Le tutoriel donne 400 pièces à la partie d'essai, et remet de quoi payer aux étapes d'achat si on a tout dépensé.
+  Ces pièces n'existent que dans la partie d'essai.
+- Les anciennes petites bulles d'aide de la V1.0 restent affichées dans une partie normale neuve.
+- Vérifié en Chrome mobile simulé, pas sur un vrai Xiaomi : le retour de Jack confirmera la lisibilité des bulles
+  et des couleurs.
 
 ## Prochaine version (V1.6)
 1. **Concurrents dans le quartier** : 1 puis 2 magasins rivaux qui apparaissent avec la progression ; ils prennent des

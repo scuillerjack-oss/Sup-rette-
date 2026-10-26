@@ -452,10 +452,10 @@ test('caisse : espèces, rendre beaucoup trop peu → même règle (refus) ; tro
   } finally { restore(); }
 });
 
-test('caisse : un caissier ne peut pas être exploité (refus aussi au-delà du seuil, pas de bouche-à-oreille)', () => {
+test('caisse : erreur d’un caissier → jamais exploitable (pas d’argent en plus sans coût), jamais de refus', () => {
   const realRandom = Math.random;
   try {
-    // article à 5,00 compté deux fois sur un ticket de 5,00 → 5,00 de trop > 2,50 (50 %) : refus
+    // article à 5,00 compté deux fois sur un ticket de 5,00 : 5,00 de trop, au-delà du seuil de refus (2,50)
     let k = 0;
     const rolls = [0, 0, 0.1, 0.99];
     Math.random = () => rolls[Math.min(k++, rolls.length - 1)];
@@ -465,10 +465,13 @@ test('caisse : un caissier ne peut pas être exploité (refus aussi au-delà du 
     const cu = { ...g.makeAgent(10, 2, { kind: 'customer' }), basket: [{ product: 'eau', price: 500 }], mood: 1, register: 1, list: [], idx: 0, path: [] };
     g.customers.push(cu);
     g.queues.get(1).push(cu.id);
+    const rep = g.state.reputation;
     g.updateRegister(1, 10);
-    assert.equal(g.state.stats.revenue, 0, 'pas d’argent');
-    assert.equal(g.state.stats.angry, 1);
-    assert.equal(g.state.distrust || 0, 0, 'erreur d’un employé : pas de méfiance du quartier');
+    assert.equal(g.state.stats.angry, 0, 'erreur d’un employé : le client paie (pas de refus)');
+    assert.ok(g.state.reputation < rep - CASH_ERRORS.lossCashier, 'toujours remarquée, la perte grandit avec l’écart');
+    assert.equal(g.state.distrust || 0, 0, 'pas de méfiance du quartier (ce n’est pas le joueur qui triche)');
+    // l'erreur vient du hasard du caissier (10 % au niveau 1), le joueur ne peut pas la provoquer
+    assert.ok(read('src/game.js').includes('if (Math.random() < lv.error)'));
   } finally {
     Math.random = realRandom;
   }
