@@ -35,7 +35,9 @@ la bêta en V1.0). Toute sauvegarde de la partie passe par `createSaver` (`src/s
   « Réalisé » de `docs/CAHIER-DES-CHARGES.md`.
 - Modèle économique : jeu gratuit, financé plus tard par la pub ; aucun coût de fonctionnement (pas de serveur,
   d'API, de LLM). Une seule monnaie : les **pièces**, gagnées en jouant — **pas de diamants** ni de monnaie premium.
-  Achats de confort seulement (ex. « sans pub »), jamais d'avantage payant.
+  Jeu solo hors ligne : de petits avantages payants sont autorisés (décision de Jack du 26/10/2026, ex. Pack Gérant
+  avec coffres offerts), mais jamais d'achat de pièces ni d'achat répétable qui casse la progression.
+  Dans un jeu EN LIGNE (joueurs contre joueurs) : aucun avantage payant, confort seulement.
 
 ## Technique
 - JS vanilla, aucune dépendance npm pour le jeu : `node build.mjs` produit un `dist/index.html` autonome
@@ -51,5 +53,6 @@ la bêta en V1.0). Toute sauvegarde de la partie passe par `createSaver` (`src/s
   (quota hebdomadaire épuisé : rien à relancer avant sa réinitialisation).
 - **Aucun jeu à perte** : chaque jeu a une fiche de rentabilité dans `docs/` (coûts réels, 3 scénarios de revenus,
   seuil de rentabilité), mise à jour avant chaque publication ; 0 € de coût de fonctionnement.
+- **Avantages payants** : autorisés dans les jeux solo hors ligne, interdits dans les jeux en ligne.
 - **Jamais de pub quand le joueur dit non** ; jamais de pub pendant qu’on joue ni dans un tutoriel.
 - Les documents de travail vivent dans `docs/` du dépôt concerné, pour être retrouvés d’une conversation à l’autre.
