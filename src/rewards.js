@@ -138,7 +138,8 @@ export function forcedAdDue(state, now, { simulate = true, noForced = false } = 
   const r = state.rewards || emptyRewards();
   if (r.forcedDay === state.day) return false;
   if (state.day - (r.adAnchor || 0) < FORCED_EVERY_DAYS) return false;
-  if (r.lastAdAt && now - r.lastAdAt < AD_GAP_MS) return false;
+  const since = now - (r.lastAdAt || 0);
+  if (r.lastAdAt && since >= 0 && since < AD_GAP_MS) return false; // (heure du téléphone reculée : on ne bloque pas)
   return true;
 }
 

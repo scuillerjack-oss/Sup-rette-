@@ -366,6 +366,7 @@ dans `src/shop.js` (`BETA_FREE = true` : le ×3 reste gratuit, aucun écran d'ac
   employé du poste, il le **remplace immédiatement** (même à 16 h ; le magasinier garde son carton en main), sans
   aucun coût en plus ni en moins. L'employé habituel garde son contrat (ses jours restants comptent normalement) et
   revient le lendemain. Pas meilleur : il reste au repos (on peut le faire travailler à la main dans « Mon équipe »).
+  Comme un employé normal, il compte dans la popularité « Personnel » du jour selon ses étoiles.
   À la fin de la journée, il part et rejoint le **carnet**. Coffre caissier et coffre magasinier le même jour :
   deux intérimaires, un par poste.
 - **Ouverture du coffre** animée (coffre qui tremble, couvercle qui saute, rayons, étoiles qui apparaissent une à
@@ -377,8 +378,8 @@ dans `src/shop.js` (`BETA_FREE = true` : le ×3 reste gratuit, aucun écran d'ac
   Dessinées en 3D et en 2D, sauvegardées.
 
 **B. Pub imposée simulée** : une toutes les 3 journées de jeu, **uniquement au bilan** (en touchant « Préparer le jour
-suivant »), jamais avant le jour 3, jamais dans le tutoriel, jamais deux pubs (tous types) à moins de 4 minutes
-réelles. Une pub récompensée regardée repousse la suivante de 3 journées. Elle ne se ferme qu'au bout des 3 s.
+suivant »), jamais avant le jour 3, jamais dans le tutoriel, jamais moins de 4 minutes réelles après une autre pub
+(récompensée ou imposée). Les pubs récompensées, elles, restent au choix du joueur et ne sont jamais bloquées. Une pub récompensée regardée repousse la suivante de 3 journées. Elle ne se ferme qu'au bout des 3 s.
 Menu ☰ → **« Simuler les pubs (bêta) »**, activé par défaut : coupé, plus aucune fausse pub et les coffres
 s'ouvrent directement (pour tester vite).
 
@@ -404,11 +405,33 @@ raisonnable, jeu pas cassé (agrandissements et licences au même prix). Détail
 Une partie V1.5 se charge sans rien perdre : l'équipe actuelle entre dans le carnet. Données abîmées ignorées.
 Appli fermée en pleine journée avec un intérimaire, rouverte un autre jour : il est parti, il est dans le carnet.
 
-**Vérifications** : 119 tests Node, dont 23 nouveaux (`tests/v16.test.mjs`) : chances sur 200 000 tirages avec
+**Vérifications** : 121 tests Node, dont 25 nouveaux (`tests/v16.test.mjs`) : chances sur 200 000 tirages avec
 graine, garantie sur 100 000 coffres (jamais 6 sans 4★+), compteur sauvegardé, une fois par journée, jour 3, refus =
 aucune pub, pas de pub ni coffre en tutoriel, cadence de la pub imposée et report, 4 minutes, remplacement immédiat
-sans coût (16 h), poste libre / moins bon / au repos, carnet et embauche au prix normal, changement de caisse,
-bilan doublé seulement si bénéfice, décorations, migration V1.5, apparence et 50/50, simulation « tous les coffres ».
+sans coût (16 h), poste libre / moins bon / au repos, deux intérimaires le même jour, carnet et embauche au prix
+normal, changement de caisse, bilan doublé seulement si bénéfice, décorations, migration V1.5, apparence et 50/50,
+simulation « tous les coffres ».
+Chrome mobile simulé (390×844), en 3D puis en repli 2D, parcours réel au doigt sur une partie V1.5 au jour 4 :
+fermer les coffres sans rien choisir → aucune pub ; coffre magasinier → pub simulée 3 s → ouverture animée →
+l'intérimaire remplace Hugo (1★) ; « Simuler les pubs » coupé → coffre caissier sans pub ; coffre déco ; plus aucun
+coffre ouvrable le même jour ; Mon équipe (intérimaire marqué, salaire hebdo, changement sans frais) ; décorations
+posées ; journée jouée ; bilan doublé (+ bénéfice exact) ; pas de pub imposée ce jour-là (pubs récompensées vues) ;
+3 journées plus tard, pub imposée au bilan, impossible à fermer avant 3 s ; rechargement : carnet et décorations
+gardés ; tutoriel : pas de bouton Coffres. Aucune requête réseau du jeu, aucune erreur du jeu en console.
+Relecture indépendante : aucun point bloquant. Corrigé après elle : pub fermée trop tôt sauvegardée, heure du
+téléphone reculée qui bloquait la pub imposée, pas deux prénoms identiques dans le carnet, texte « 4 minutes »
+précisé. Gardé exprès : l'intérimaire compte dans la popularité « Personnel » comme un employé normal.
+Avant la relecture, les captures ont aussi révélé un bug corrigé : ouvrir le coffre caissier après le coffre
+magasinier faisait disparaître le magasinier intérimaire (un seul intérimaire à la fois) → un intérimaire par poste.
+
+**Limites connues / à décider avec Jack** :
+- Les pubs sont simulées : rien ne rapporte encore. AdMob et le consentement RGPD seront branchés plus tard, avec
+  l'accord écrit de Jack, en ne changeant que `src/ads.js`.
+- Pubs récompensées : jamais bloquées par l'écart de 4 minutes (c'est le joueur qui choisit) ; seule la pub
+  imposée attend 4 minutes après une autre pub.
+- Le bilan doublé est le plus gros gain : à surveiller en bêta (piste : le plafonner selon le niveau).
+- Coupure de l'appli pendant une fausse pub : la récompense est perdue (le coffre du jour reste disponible).
+- Vérifié en Chrome mobile simulé, pas sur un vrai Xiaomi.
 
 ## Prochaine version (V1.7)
 1. **Concurrents dans le quartier** : 1 puis 2 magasins rivaux qui apparaissent avec la progression ; ils prennent des

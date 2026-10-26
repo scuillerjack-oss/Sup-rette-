@@ -789,7 +789,8 @@ export class Game {
     const s = this.state;
     const roll = rollStars(s.rewards.pity, rng);
     s.rewards.pity = roll.pity;
-    const used = new Set([...this.contracted('cashier'), ...this.contracted('stocker')].map((m) => m.name));
+    // Prénom pas déjà pris dans l'équipe, le carnet ou par l'autre intérimaire (relecture : pas deux « Léa »).
+    const used = new Set([...this.contracted('cashier'), ...this.contracted('stocker'), ...(s.roster || []), ...Object.values(s.temps || {}).filter(Boolean).map((t) => t.member)].map((m) => m.name));
     let name = FIRST_NAMES[Math.floor(rng() * FIRST_NAMES.length)];
     for (let k = 0; k < 12 && used.has(name); k++) name = FIRST_NAMES[Math.floor(rng() * FIRST_NAMES.length)];
     const member = { id: this.newStaffId(), name, level: roll.stars, look: Math.floor(rng() * 6) };

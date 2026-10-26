@@ -138,7 +138,7 @@ test('pubs : refuser = AUCUNE pub. La pub récompensée ne part que d’un geste
   // fermer le panneau des coffres (= dire non) : rien d'autre que fermer
   assert.match(ui, /case 'close': return this\.close\(\);/);
   // pub récompensée fermée avant la fin : pas de récompense
-  assert.match(ui, /if \(!r\.watched\) \{[\s\S]{0,200}return null;/);
+  assert.match(ui, /if \(!r\.watched\) \{[\s\S]{0,300}return null;/);
   // ne jamais toucher aux coffres ne déclenche rien : la pub imposée ne dépend que des journées jouées
   const s = newState();
   s.day = 4; s.phase = 'summary';
@@ -478,4 +478,27 @@ test('version : 1.6.0, versionCode au-dessus de la V1.5 ; le build embarque rewa
   assert.equal(v, '1.6.0');
   assert.ok(versionCodeFor(v, 1) > versionCodeFor('1.5.0', 999));
   assert.match(read('build.mjs'), /'data', 'rewards'[\s\S]*'ads', 'shop', 'ui'/);
+});
+
+test('relecture : heure du téléphone reculée → la pub imposée n’est pas bloquée indéfiniment', () => {
+  const s = newState();
+  s.day = 9; s.phase = 'summary';
+  s.rewards.adAnchor = 3;
+  s.rewards.lastAdAt = 5000 * MIN;
+  assert.equal(forcedAdDue(s, 1000 * MIN), true);
+});
+
+test('relecture : un coffre ne donne jamais un prénom déjà dans le carnet ou l’équipe (tant qu’il en reste)', () => {
+  const g = shop();
+  const rng = seededRng(11);
+  const seen = new Set();
+  for (let d = 0; d < 12; d++) {
+    const r = g.claimReward(d % 2 ? 'cashier' : 'stocker', { rng, now: 0 });
+    assert.ok(r.ok);
+    assert.ok(!seen.has(r.member.name), `doublon ${r.member.name}`);
+    seen.add(r.member.name);
+    run(g, 400);
+    g.nextDay();
+    g.openStore();
+  }
 });

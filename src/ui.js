@@ -511,8 +511,8 @@ export class UI {
       let r;
       try { r = await showRewarded(kind); } finally { g.paused = wasPaused; this.adBusy = false; }
       if (!r.watched) {
-        if (!g.state.rewards) g.state.rewards = {};
-        g.state.rewards.lastAdAt = Date.now();
+        if (g.state.rewards) g.state.rewards.lastAdAt = Date.now(); // compte pour l'écart de 4 min
+        this.hooks.save();
         this.toast('Pub fermée avant la fin : pas de récompense', 'warn');
         return null;
       }
@@ -879,7 +879,7 @@ export class UI {
         ${popRows(d.rep)}
         ${d.goals && d.goals.length ? `<div class="sumgoals"><b>🎯 Objectifs : ${d.goals.filter((x) => x.done).length}/${d.goals.length}${d.goalCoins ? ` · +${money(d.goalCoins)} pièces` : ''}</b>${d.goals.map((x) => `<span class="${x.done ? 'ok' : 'ko'}">${x.done ? '✔' : '✘'} ${esc(x.label)}</span>`).join('')}</div>` : ''}
         ${d.staffEnding.length ? `<p class="note">Fin de contrat : ${d.staffEnding.map(esc).join(', ')}. Pense à renouveler dans Personnel.</p>` : ''}
-        ${d.tempLeft ? `<p class="note ok">Intérimaire${d.tempLeft.includes(' et ') ? 's' : ''} parti${d.tempLeft.includes(' et ') ? 's' : ''} à 20 h : ${esc(d.tempLeft)}. Retrouve-le dans Personnel → Mon équipe.</p>` : ''}
+        ${d.tempLeft ? (d.tempLeft.includes(' et ') ? `<p class="note ok">Intérimaires partis à 20 h : ${esc(d.tempLeft)}. Retrouve-les dans Personnel → Mon équipe.</p>` : `<p class="note ok">Intérimaire parti à 20 h : ${esc(d.tempLeft)}. Retrouve-le dans Personnel → Mon équipe.</p>`) : ''}
         <button class="primary" data-a="next">Préparer le jour ${d.day + 1}</button>`;
     } else if (m.kind === 'chest') {
       card.innerHTML = this.chestRevealHtml(m.data);
