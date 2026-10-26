@@ -368,7 +368,7 @@ export class Renderer {
         const st = s.delivery[i];
         if (d.r !== r || !st.length) continue;
         // Cartons empilés en décalé : le nom de chacun reste visible (le carton du dessus est entier).
-        for (let k = 0; k < st.length; k++) this.drawCarton(X(d.c) + T * 0.5, Y(d.r) + T * 0.86 - k * T * 0.3, T * 0.86, st[k], true, false);
+        for (let k = 0; k < st.length; k++) this.drawCarton(X(d.c) + T * 0.5, Y(d.r) + T * 0.86 - k * T * 0.3, T * 0.86, st[k], true, k < st.length - 1);
         if (!pulsed && s.tutorial === 1 && !g.player.carry) { pulsed = true; this.pulseRing(X(d.c) + T * 0.5, Y(d.r) + T * 0.5, T * 0.55); }
       }
       for (const sh of s.shelves) {
@@ -496,32 +496,30 @@ export class Renderer {
     rr(ctx, x, y, w, h, 3); ctx.fill();
     ctx.fillStyle = '#dbb07a';
     ctx.fillRect(x, y, w, h * 0.22);
-    // étiquette blanche : bande de couleur, icône, nom
-    ctx.fillStyle = '#fff';
-    rr(ctx, x + w * 0.05, y + h * 0.28, w * 0.9, h * 0.64, 3); ctx.fill();
-    ctx.fillStyle = p.color;
-    ctx.fillRect(x + w * 0.05, y + h * 0.28, w * 0.06, h * 0.64);
-    const isz = h * 0.56;
-    ctx.drawImage(this.icon(p, Math.round(isz)), x + w * 0.12, y + h * 0.32, isz, isz);
-    if (named && compact) {
-      // carton à moitié caché par celui du dessus : le nom en haut de la face, sur toute la largeur
+    // V1.5 : code couleur du produit (plus de nom écrit, il cachait le carton). Bande de couleur en haut de la
+    // face (visible même quand le carton du dessus cache le reste) et petite icône du produit (daltonisme).
+    // Carton à moitié caché par celui du dessus (compact) : la bande va dans le bas de la face, la partie visible.
+    const edge = luminance(p.tag) > 0.8 ? '#5b6670' : 'rgba(255,255,255,0.8)';
+    const by0 = compact ? y + h * 0.5 : y + h * 0.04;
+    const bh = compact ? h * 0.36 : h * 0.34;
+    ctx.fillStyle = p.tag;
+    ctx.fillRect(x, by0, w, bh);
+    ctx.fillStyle = edge;
+    ctx.fillRect(x, by0, w, 1.2);
+    ctx.fillRect(x, by0 + bh - 1.2, w, 1.2);
+    if (compact) {
+      const isz = bh * 0.8;
       ctx.fillStyle = '#fff';
-      rr(ctx, x + w * 0.05, y + h * 0.04, w * 0.9, h * 0.44, 3); ctx.fill();
-      ctx.fillStyle = p.color;
-      ctx.fillRect(x + w * 0.05, y + h * 0.04, w * 0.06, h * 0.44);
-      ctx.font = `800 ${Math.max(7, Math.round(h * 0.32))}px ${FONT}`;
-      ctx.fillStyle = '#1d2b30';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(p.short, cx + w * 0.03, y + h * 0.27, w * 0.8);
-    } else if (named) {
-      const fsz = Math.max(7, Math.round(h * 0.34));
-      ctx.font = `800 ${fsz}px ${FONT}`;
-      ctx.fillStyle = '#1d2b30';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const tx0 = x + w * 0.14 + isz;
-      ctx.fillText(p.short, (tx0 + x + w * 0.93) / 2, y + h * 0.61, x + w * 0.93 - tx0);
+      ctx.beginPath(); ctx.arc(cx, by0 + bh / 2, isz * 0.55, 0, Math.PI * 2); ctx.fill();
+      ctx.drawImage(this.icon(p, Math.round(isz)), cx - isz * 0.45, by0 + bh / 2 - isz * 0.45, isz * 0.9, isz * 0.9);
+    }
+    if (named && !compact) {
+      const isz = h * 0.46;
+      ctx.fillStyle = p.tag;
+      rr(ctx, cx - isz * 0.75, y + h * 0.42, isz * 1.5, isz * 1.08, 3); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(cx, y + h * 0.42 + isz * 0.54, isz * 0.48, 0, Math.PI * 2); ctx.fill();
+      ctx.drawImage(this.icon(p, Math.round(isz)), cx - isz * 0.4, y + h * 0.42 + isz * 0.14, isz * 0.8, isz * 0.8);
     }
     if (carton.qty < p.qty) {
       ctx.fillStyle = '#2d7a73';
@@ -556,11 +554,11 @@ export class Renderer {
     ctx.fillRect(x + w - 3, top, 3, h);
     // Fronton coloré avec le nom du produit (V1.4)
     const p = sh.product ? PRODUCT_BY_ID[sh.product] : null;
-    ctx.fillStyle = p ? p.color : '#9aa7b0';
+    ctx.fillStyle = p ? p.tag : '#9aa7b0'; // V1.5 : même couleur que le code des cartons
     rr(ctx, x, top, w, h * 0.16, 5); ctx.fill();
     ctx.fillRect(x, top + h * 0.08, w, h * 0.08);
     if (p) {
-      ctx.fillStyle = luminance(p.color) > 0.62 ? '#1d2b30' : '#ffffff';
+      ctx.fillStyle = luminance(p.tag) > 0.62 ? '#1d2b30' : '#ffffff';
       ctx.font = `800 ${Math.max(8, Math.round(h * 0.12))}px ${FONT}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';

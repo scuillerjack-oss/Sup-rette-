@@ -3,6 +3,9 @@
 
 export const SAVE_KEY = 'superette-save-v1';
 export const SETTINGS_KEY = 'superette-settings-v1';
+// V1.5 : tutoriel. Sa partie d'essai a sa PROPRE clé : la partie normale (SAVE_KEY) n'est jamais touchée.
+export const TUTO_SAVE_KEY = 'superette-tuto-save-v1';
+export const TUTO_FLAG_KEY = 'superette-tuto-v1'; // { seen: proposé au 1er lancement ?, mode: 'normal' | 'tuto' }
 
 // --- Temps -----------------------------------------------------------------
 export const DAY_START = 8 * 60; // 8:00 en minutes de jeu
@@ -76,26 +79,29 @@ export const REGISTERS = [
 // --- Catalogue ---------------------------------------------------------------
 // unitCost = cartonCost / qty ; market = prix de vente conseillé (marge ≈ ×2).
 // short : nom court écrit sur les cartons et les frontons d'étagères (lisible sur téléphone).
+// tag / tagName (V1.5) : code couleur du produit. Étiquette de cette couleur sur les cartons (plus de nom écrit
+// dessus, il cachait les cartons) et même couleur sur le panneau de l'étagère, qui garde le nom. Couleurs bien
+// distinctes ; l'icône du produit reste sur l'étiquette (daltonisme).
 // shape : forme du dessin (bottle, box, bag, can, carton, jar, bar, tube, pack, wheel).
 export const PRODUCTS = [
-  { id: 'eau', name: 'Eau', short: 'Eau', brand: 'Source Claire', level: 1, licence: 0, qty: 12, cartonCost: 6.0, market: 1.0, color: '#4aa8e8', shape: 'bottle' },
-  { id: 'pates', name: 'Pâtes', short: 'Pâtes', brand: 'Nonna', level: 1, licence: 0, qty: 12, cartonCost: 9.6, market: 1.6, color: '#f2b632', shape: 'box' },
-  { id: 'chips', name: 'Chips', short: 'Chips', brand: 'Croc', level: 1, licence: 0, qty: 12, cartonCost: 12.0, market: 2.0, color: '#e8483d', shape: 'bag' },
-  { id: 'soda', name: 'Soda', short: 'Soda', brand: 'Cola Boum', level: 2, licence: 80, qty: 12, cartonCost: 8.4, market: 1.5, color: '#c4262e', shape: 'can' },
-  { id: 'biscuits', name: 'Biscuits', short: 'Biscuits', brand: 'Mamie', level: 2, licence: 120, qty: 12, cartonCost: 14.4, market: 2.4, color: '#b97a3b', shape: 'pack' },
-  { id: 'lait', name: 'Lait', short: 'Lait', brand: 'Prairie', level: 3, licence: 200, qty: 12, cartonCost: 8.4, market: 1.4, color: '#e9eef5', shape: 'carton' },
-  { id: 'cafe', name: 'Café', short: 'Café', brand: 'Noir Intense', level: 4, licence: 350, qty: 6, cartonCost: 15.0, market: 5.0, color: '#5a3b28', shape: 'pack' },
-  { id: 'cereales', name: 'Céréales', short: 'Céréales', brand: 'Croustis', level: 5, licence: 500, qty: 8, cartonCost: 14.4, market: 3.6, color: '#f08a24', shape: 'box' },
-  { id: 'savon', name: 'Savon', short: 'Savon', brand: 'Bulle', level: 6, licence: 700, qty: 12, cartonCost: 18.0, market: 3.0, color: '#9fd9c8', shape: 'bar' },
-  { id: 'chocolat', name: 'Chocolat', short: 'Choco', brand: 'Choco Lune', level: 7, licence: 900, qty: 12, cartonCost: 14.4, market: 2.6, color: '#7a4a8c', shape: 'bar' },
-  { id: 'riz', name: 'Riz', short: 'Riz', brand: 'Doré', level: 8, licence: 1200, qty: 12, cartonCost: 13.2, market: 2.2, color: '#e8d9a8', shape: 'bag' },
-  { id: 'jus', name: 'Jus d’orange', short: 'Jus', brand: 'Soleil', level: 9, licence: 1500, qty: 12, cartonCost: 16.8, market: 2.8, color: '#ff9f1c', shape: 'carton' },
-  { id: 'shampoing', name: 'Shampoing', short: 'Shampo', brand: 'Nuage', level: 10, licence: 2000, qty: 6, cartonCost: 14.4, market: 4.8, color: '#6c8cff', shape: 'tube' },
-  { id: 'fromage', name: 'Fromage', short: 'Fromage', brand: 'Alpin', level: 12, licence: 2600, qty: 6, cartonCost: 18.0, market: 6.0, color: '#ffd23f', shape: 'wheel' },
-  { id: 'confiture', name: 'Confiture', short: 'Confit.', brand: 'Fraise des bois', level: 14, licence: 3200, qty: 8, cartonCost: 16.0, market: 4.0, color: '#d6336c', shape: 'jar' },
-  { id: 'the', name: 'Thé', short: 'Thé', brand: 'Jardin', level: 16, licence: 4000, qty: 10, cartonCost: 18.0, market: 3.6, color: '#5fa05a', shape: 'box' },
-  { id: 'dentifrice', name: 'Dentifrice', short: 'Dentifr.', brand: 'Éclat', level: 18, licence: 5000, qty: 12, cartonCost: 15.6, market: 2.8, color: '#38b6c9', shape: 'tube' },
-  { id: 'bonbons', name: 'Bonbons', short: 'Bonbons', brand: 'Pop', level: 20, licence: 6500, qty: 24, cartonCost: 14.4, market: 1.3, color: '#ff5fa2', shape: 'jar' }
+  { id: 'eau', name: 'Eau', short: 'Eau', brand: 'Source Claire', level: 1, licence: 0, qty: 12, cartonCost: 6.0, market: 1.0, color: '#4aa8e8', shape: 'bottle', tag: '#1e7fe0', tagName: 'bleue' },
+  { id: 'pates', name: 'Pâtes', short: 'Pâtes', brand: 'Nonna', level: 1, licence: 0, qty: 12, cartonCost: 9.6, market: 1.6, color: '#f2b632', shape: 'box', tag: '#ff8c1a', tagName: 'orange' },
+  { id: 'chips', name: 'Chips', short: 'Chips', brand: 'Croc', level: 1, licence: 0, qty: 12, cartonCost: 12.0, market: 2.0, color: '#e8483d', shape: 'bag', tag: '#e53935', tagName: 'rouge' },
+  { id: 'soda', name: 'Soda', short: 'Soda', brand: 'Cola Boum', level: 2, licence: 80, qty: 12, cartonCost: 8.4, market: 1.5, color: '#c4262e', shape: 'can', tag: '#8e3fd1', tagName: 'violette' },
+  { id: 'biscuits', name: 'Biscuits', short: 'Biscuits', brand: 'Mamie', level: 2, licence: 120, qty: 12, cartonCost: 14.4, market: 2.4, color: '#b97a3b', shape: 'pack', tag: '#7a4b2a', tagName: 'marron' },
+  { id: 'lait', name: 'Lait', short: 'Lait', brand: 'Prairie', level: 3, licence: 200, qty: 12, cartonCost: 8.4, market: 1.4, color: '#e9eef5', shape: 'carton', tag: '#ffffff', tagName: 'blanche' },
+  { id: 'cafe', name: 'Café', short: 'Café', brand: 'Noir Intense', level: 4, licence: 350, qty: 6, cartonCost: 15.0, market: 5.0, color: '#5a3b28', shape: 'pack', tag: '#1f1f1f', tagName: 'noire' },
+  { id: 'cereales', name: 'Céréales', short: 'Céréales', brand: 'Croustis', level: 5, licence: 500, qty: 8, cartonCost: 14.4, market: 3.6, color: '#f08a24', shape: 'box', tag: '#ffd400', tagName: 'jaune' },
+  { id: 'savon', name: 'Savon', short: 'Savon', brand: 'Bulle', level: 6, licence: 700, qty: 12, cartonCost: 18.0, market: 3.0, color: '#9fd9c8', shape: 'bar', tag: '#14b8a6', tagName: 'turquoise' },
+  { id: 'chocolat', name: 'Chocolat', short: 'Choco', brand: 'Choco Lune', level: 7, licence: 900, qty: 12, cartonCost: 14.4, market: 2.6, color: '#7a4a8c', shape: 'bar', tag: '#ff4fa3', tagName: 'rose' },
+  { id: 'riz', name: 'Riz', short: 'Riz', brand: 'Doré', level: 8, licence: 1200, qty: 12, cartonCost: 13.2, market: 2.2, color: '#e8d9a8', shape: 'bag', tag: '#9aa3ab', tagName: 'grise' },
+  { id: 'jus', name: 'Jus d’orange', short: 'Jus', brand: 'Soleil', level: 9, licence: 1500, qty: 12, cartonCost: 16.8, market: 2.8, color: '#ff9f1c', shape: 'carton', tag: '#8bc34a', tagName: 'vert clair' },
+  { id: 'shampoing', name: 'Shampoing', short: 'Shampo', brand: 'Nuage', level: 10, licence: 2000, qty: 6, cartonCost: 14.4, market: 4.8, color: '#6c8cff', shape: 'tube', tag: '#283593', tagName: 'bleu marine' },
+  { id: 'fromage', name: 'Fromage', short: 'Fromage', brand: 'Alpin', level: 12, licence: 2600, qty: 6, cartonCost: 18.0, market: 6.0, color: '#ffd23f', shape: 'wheel', tag: '#e0cb98', tagName: 'beige' },
+  { id: 'confiture', name: 'Confiture', short: 'Confit.', brand: 'Fraise des bois', level: 14, licence: 3200, qty: 8, cartonCost: 16.0, market: 4.0, color: '#d6336c', shape: 'jar', tag: '#8b1a3a', tagName: 'bordeaux' },
+  { id: 'the', name: 'Thé', short: 'Thé', brand: 'Jardin', level: 16, licence: 4000, qty: 10, cartonCost: 18.0, market: 3.6, color: '#5fa05a', shape: 'box', tag: '#2e7d32', tagName: 'vert foncé' },
+  { id: 'dentifrice', name: 'Dentifrice', short: 'Dentifr.', brand: 'Éclat', level: 18, licence: 5000, qty: 12, cartonCost: 15.6, market: 2.8, color: '#38b6c9', shape: 'tube', tag: '#7fd4ff', tagName: 'bleu ciel' },
+  { id: 'bonbons', name: 'Bonbons', short: 'Bonbons', brand: 'Pop', level: 20, licence: 6500, qty: 24, cartonCost: 14.4, market: 1.3, color: '#ff5fa2', shape: 'jar', tag: '#c6a0ff', tagName: 'lilas' }
 ];
 export const PRODUCT_BY_ID = Object.fromEntries(PRODUCTS.map((p) => [p.id, p]));
 
@@ -178,8 +184,8 @@ export function popularityFactor(reputation) {
   return 0.55 + (Math.max(0, Math.min(100, reputation)) / 100) * 0.9;
 }
 // « mult » : multiplicateur du jour (événement de quartier ; plus tard, les concurrents de la V1.3).
-export function customersPerDay(state, stockedTypes, mult = 1) {
-  return Math.max(4, Math.round((13 + 1.9 * stockedTypes + Math.min(10, state.level * 0.6)) * popularityFactor(state.reputation) * mult));
+export function customersPerDay(state, stockedTypes, mult = 1, floor = 4) {
+  return Math.max(floor, Math.round((13 + 1.9 * stockedTypes + Math.min(10, state.level * 0.6)) * popularityFactor(state.reputation) * mult));
 }
 
 // --- Événements de quartier (V1.2) ------------------------------------------
@@ -217,7 +223,39 @@ export const CASH_ERRORS = {
   gainPerCoin: 0.15, // popularité gagnée par pièce offerte par erreur
   gainMax: 0.5,
   lossPlayer: 2, // client qui remarque qu'on l'a fait payer trop (caisse tenue par toi)
-  lossCashier: 1.5 // idem, erreur d'un caissier
+  lossCashier: 1.5, // idem, erreur d'un caissier
+  // V1.5 (bug de la bêta : 1 600 encaissés pour un ticket de 1,60). Seuils PROPORTIONNELS au ticket, fixés par le
+  // chef de projet avec l'accord de Jack (écart = ce que le client paie en trop) :
+  //  1) écart ≤ max(0,20 ; 5 % du ticket) : peut passer inaperçu, et plus l'écart est grand, plus il se voit ;
+  //  2) au-dessus, jusqu'à min(10 ; max(2 ; 50 % du ticket)) : le client le remarque TOUJOURS, il paie quand même,
+  //     la popularité baisse d'autant plus que l'écart est grand ;
+  //  3) au-delà : il REFUSE. Vente annulée, articles reposés en rayon, client furieux, forte baisse.
+  //  Exemples : ticket 1,60 → inaperçu ≤ 0,20, paie jusqu'à +2,00, refuse au-delà ;
+  //             ticket 30   → inaperçu ≤ 1,50, paie jusqu'à +10,00, refuse au-delà.
+  discreetMin: 20, // centimes
+  discreetPct: 0.05,
+  payMin: 200, // centimes
+  payPct: 0.5,
+  payMax: 1000, // centimes
+  noticeFloor: 0.4, // dans la zone 1 : chance de remarquer = chance de base × (0,4 + 0,6 × écart / seuil)
+  lossPerCoin: 0.6, // zone 2 : popularité perdue en plus par pièce au-delà du seuil « inaperçu »
+  refuseLoss: 8, // zone 3 : client qui refuse
+  refuseLossPerCoin: 0.4, // … plus 0,4 par pièce au-delà du seuil de refus
+  refuseLossMax: 25,
+  // Bouche-à-oreille : chaque pièce prise en trop et remarquée (au-delà du seuil « inaperçu ») fait fuir des
+  // clients les jours suivants : clients du jour × (1 − méfiance / distrustScale), méfiance divisée par 2 chaque
+  // nuit. Calibré au robot (tests/v15.test.mjs) : surfacturer fait toujours finir plus pauvre que rester honnête.
+  distrustScale: 25,
+  distrustDecay: 0.5,
+  distrustFloor: 0.15
 };
+// Seuils d'une erreur de caisse en faveur du magasin pour un ticket « due » (centimes) : { discreet, refuse }.
+export function cashThresholds(due) {
+  const refuse = Math.min(CASH_ERRORS.payMax, Math.max(CASH_ERRORS.payMin, Math.round(due * CASH_ERRORS.payPct)));
+  const discreet = Math.min(refuse, Math.max(CASH_ERRORS.discreetMin, Math.round(due * CASH_ERRORS.discreetPct)));
+  return { discreet, refuse };
+}
+// Saisie du montant au terminal de carte : 3 chiffres avant la virgule au plus (999,99), 2 après.
+export const CARD_MAX_INT_DIGITS = 3;
 export const BILLS = [50, 20, 10, 5];
 export const CHANGE_MONEY = [20, 10, 5, 2, 1, 0.5, 0.2, 0.1];

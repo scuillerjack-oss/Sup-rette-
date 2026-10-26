@@ -3,7 +3,10 @@
 import { Game, cents } from '../src/game.js';
 import { PRODUCTS, PRODUCT_BY_ID, SHELF_SLOTS, SHELF_CAPACITY, ZONES, REGISTERS, STAFF, DELIVERY_SPOTS } from '../src/data.js';
 
-export function playBot({ days = 30, skill = 1, log = false, maxRealSeconds = 1e9 } = {}) {
+// overcharge (V1.5, test anti-triche) : centimes encaissés EN TROP à chaque client (carte : montant tapé plus
+// haut ; espèces : monnaie rendue en moins, dans la limite de ce qu'il y a à rendre).
+// noInvest : ne rien acheter d'autre que la marchandise (pour comparer des pièces à pièces).
+export function playBot({ days = 30, skill = 1, log = false, maxRealSeconds = 1e9, overcharge = 0, noInvest = false } = {}) {
   const g = new Game();
   g.speed = 1;
   const marks = {};
@@ -12,17 +15,17 @@ export function playBot({ days = 30, skill = 1, log = false, maxRealSeconds = 1e
   for (let d = 0; d < days; d++) {
     const s = g.state;
     // --- Préparation : achats
-    invest(g);
+    if (!noInvest) invest(g);
     restock(g);
     for (let i = 0; i < 400 && (s.pending.length || g.deliveryCount()); i++) {
-      step(g, 0.05, skill);
+      step(g, 0.05, skill, overcharge);
       simSeconds += 0.05;
       if (!s.pending.length && !hasUsefulCarton(g)) break;
     }
     g.openStore();
     let guard = 0;
     while (s.phase !== 'summary' && guard++ < 20000) {
-      step(g, 0.05, skill);
+      step(g, 0.05, skill, overcharge);
       simSeconds += 0.05;
       if (guard % 200 === 0 && s.phase === 'open') restock(g);
     }
@@ -108,7 +111,7 @@ function restock(g) {
   if (Object.keys(cart).length) g.order(cart);
 }
 
-function step(g, dt, skill) {
+function step(g, dt, skill, overcharge = 0) {
   const p = g.player;
   const s = g.state;
   if (!p.path.length && !p.fill) {
@@ -125,10 +128,11 @@ function step(g, dt, skill) {
           g.scan(it.i);
         } else if (co.step === 'exact') g.validateExact();
         else if (co.step === 'card') {
-          for (const ch of String(co.total)) g.cardKey(ch);
+          const v = co.total + overcharge;
+          for (const ch of `${Math.floor(v / 100)},${String(v % 100).padStart(2, '0')}`) g.cardKey(ch);
           g.cardKey('ok');
         } else if (co.step === 'cash') {
-          let due = g.changeDue() - g.changeGiven();
+          let due = g.changeDue() - g.changeGiven() - Math.min(overcharge, g.changeDue());
           for (const v of [2000, 1000, 500, 200, 100, 50, 20, 10]) while (due >= v) { g.giveChange(v); due -= v; }
           g.validateCash();
         }

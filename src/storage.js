@@ -27,6 +27,8 @@ export function createSaver(storage, key, getState, { fresh, serializeFn }) {
         try { storage.removeItem(key); } catch (err) { /* ignoré */ }
       }
     },
+    // V1.5 : plus aucune sauvegarde jusqu'au rechargement (fin du tutoriel : sa partie d'essai est effacée).
+    lock() { locked = true; },
     get locked() { return locked; }
   };
 }
