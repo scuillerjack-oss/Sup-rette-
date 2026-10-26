@@ -27,7 +27,10 @@ function start(hotData) {
   // V1.5 : partie normale (clé SAVE_KEY) ou partie d'essai du tutoriel (sa propre clé), voir src/tutorial.js.
   const store = getStore() || NO_STORE;
   const plan = sessionPlan(store);
-  const initial = (hotData && hotData.state && deserialize(hotData.state)) || plan.state || newState();
+  // (aperçu Claude : un état gardé en mémoire n'est repris que s'il est du même type de partie que la clé utilisée)
+  const hot = hotData && hotData.state && deserialize(hotData.state);
+  const hotOk = hot && !!hot.tutoMode === (plan.mode === 'tuto');
+  const initial = (hotOk && hot) || plan.state || (plan.mode === 'tuto' ? plan.fresh() : newState());
   const game = new Game(initial);
   const canvas = document.getElementById('cv');
   let renderer;
