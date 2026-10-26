@@ -7,6 +7,7 @@ import {
   DELIVERY_SECONDS, PATIENCE_SECONDS, BILLS, EVENTS, EVENT_BY_ID, GOALS_PER_DAY, GOALS_FROM_DAY, goalReward, CARD_MAX_INT_DIGITS, cashThresholds
 } from './data.js';
 import { buildBlocked, findPath, reachable, DIRS } from './layout.js';
+import { emptyRewards, emptyDeco, cleanRewards, cleanDeco, rewardStatus, rollStars, rollDeco, noteAd, DECO_BY_ID, REWARD_FROM_DAY } from './rewards.js';
 
 export const cents = (v) => Math.round(v * 100);
 
@@ -38,7 +39,13 @@ export function newState() {
     tutorial: 0,
     event: null, // événement de quartier du jour (V1.2)
     distrust: 0, // méfiance du quartier après des clients surfacturés (V1.5)
-    goals: null // objectifs du jour (V1.2) : { day, list: [{ kind, target, reward }] }
+    goals: null, // objectifs du jour (V1.2) : { day, list: [{ kind, target, reward }] }
+    // V1.6 : coffres et pubs simulées (src/rewards.js), décorations, carnet d'employés, intérimaire du jour.
+    rewards: emptyRewards(),
+    deco: emptyDeco(),
+    roster: [], // carnet : tous les employés connus { id, kind, name, level, look, from: 'embauche' | 'coffre' }
+    temp: null, // intérimaire du jour : { day, kind, member, replaces: id | null, onDuty }
+    nextStaffId: 1000000 // numéros d'employés uniques et sauvegardés
   };
 }
 
@@ -130,6 +137,23 @@ export function deserialize(json) {
       for (const c of Array.isArray(del[i]) ? del[i] : []) if (c && PRODUCT_BY_ID[c.product] && c.qty > 0) merged.pending.push({ product: c.product, eta: 1, qty: c.qty });
     }
     if (merged.event && !EVENT_BY_ID[merged.event]) merged.event = null;
+    // V1.6 : partie V1.5 → coffres, décorations, carnet (avec l'équipe actuelle) et intérimaire. Rien n'est perdu.
+    merged.rewards = cleanRewards(s.rewards);
+    merged.deco = cleanDeco(s.deco);
+    if (!Array.isArray(merged.staff.cashiers)) merged.staff.cashiers = [];
+    const ok = (m) => m && typeof m === 'object' && Number.isFinite(m.level) && m.level >= 1 && m.level <= 5 && typeof m.name === 'string';
+    merged.staff.cashiers = merged.staff.cashiers.filter(ok);
+    if (merged.staff.stocker && !ok(merged.staff.stocker)) merged.staff.stocker = null;
+    const roster = (Array.isArray(s.roster) ? s.roster : []).filter((m) => ok(m) && STAFF[m.kind]);
+    const known = new Set(roster.map((m) => `${m.kind}:${m.id}`));
+    const addKnown = (kind, m) => { if (m && !known.has(`${kind}:${m.id}`)) { known.add(`${kind}:${m.id}`); roster.push({ id: m.id, kind, name: m.name, level: m.level, look: m.look || 0, from: 'embauche' }); } };
+    for (const c of merged.staff.cashiers) addKnown('cashier', c);
+    addKnown('stocker', merged.staff.stocker);
+    merged.roster = roster;
+    const t = s.temp;
+    merged.temp = t && STAFF[t.kind] && ok(t.member) && Number.isFinite(t.day) ? t : null;
+    const maxId = Math.max(0, ...roster.map((m) => Number(m.id) || 0), ...(merged.temp ? [Number(merged.temp.member.id) || 0] : []));
+    merged.nextStaffId = Math.max(1000000, Number(s.nextStaffId) || 0, maxId + 1);
     if (merged.goals && (!Array.isArray(merged.goals.list) || merged.goals.list.some((g) => !GOAL_KINDS[g.kind]))) merged.goals = null;
     for (const p of PRODUCTS) {
       if (merged.prices[p.id] == null) merged.prices[p.id] = cents(p.market);
@@ -208,6 +232,13 @@ export class Game {
     this.nextPayment = null;
     this.drops = 0;
     this.moves = 0; // étagères déplacées (tutoriel)
+    // V1.6 : un intérimaire d'une journée passée (appli fermée avant le bilan) rejoint le carnet et s'en va.
+    const t = this.state.temp;
+    if (t && t.day !== this.state.day) {
+      this.addToRoster(t.kind, t.member, 'coffre');
+      this.state.temp = null;
+    }
+    if (!this.state.cashierRegs || typeof this.state.cashierRegs !== 'object') this.state.cashierRegs = {};
     this.syncStaff();
     // Ancienne sauvegarde (V1.1 et avant) : pas encore d'objectifs du jour.
     if (!this.state.goals || this.state.goals.day !== this.state.day) this.planDay(this.state.phase === 'prep');
@@ -315,11 +346,19 @@ export class Game {
     const s = this.state;
     const map = new Map();
     const free = [...s.registers].sort((a, b) => a - b).filter((id) => id !== this.player.atRegister);
-    let i = 0;
-    for (const c of s.staff.cashiers) {
-      if (c.days <= 0) continue;
-      if (i >= free.length) break;
-      map.set(free[i++], c);
+    // V1.6 : contrats + intérimaire du jour ; caisse choisie dans « Mon équipe » d'abord, puis dans l'ordre.
+    const duty = this.dutyCashiers();
+    const prefs = s.cashierRegs || {};
+    const rest = [];
+    for (const c of duty) {
+      const want = prefs[c.id];
+      if (free.includes(want) && !map.has(want)) map.set(want, c);
+      else rest.push(c);
+    }
+    for (const c of rest) {
+      const r = free.find((id) => !map.has(id));
+      if (r == null) break;
+      map.set(r, c);
     }
     return map;
   }
@@ -590,13 +629,193 @@ export class Game {
     if (kind === 'stocker' && s.staff.stocker && s.staff.stocker.days > 0) return { ok: false, reason: 'Un magasinier est déjà sous contrat' };
     if (s.coins < cost) return { ok: false, reason: 'Pas assez de pièces' };
     s.coins -= cost;
-    const member = { id: cand.id, name: cand.name, level: cand.level, look: cand.look, days: CONTRACT_DAYS };
-    if (kind === 'cashier') s.staff.cashiers = [...s.staff.cashiers.filter((c) => c.days > 0), member];
-    else s.staff.stocker = member;
+    const member = { id: this.newStaffId(), name: cand.name, level: cand.level, look: cand.look, days: CONTRACT_DAYS };
+    this.addToRoster(kind, member, 'embauche');
+    this.putUnderContract(kind, member);
     s.candidates[kind] = cands.filter((c) => c.id !== cand.id);
-    this.syncStaff();
     this.emit('sfx', { name: 'buy' });
     return { ok: true, member };
+  }
+
+  // ------------------------------------------------------------- équipe, carnet et intérimaire (V1.6)
+  newStaffId() {
+    const s = this.state;
+    if (!Number.isFinite(s.nextStaffId)) s.nextStaffId = 1000000;
+    return s.nextStaffId++;
+  }
+  addToRoster(kind, m, from) {
+    const s = this.state;
+    if (!Array.isArray(s.roster)) s.roster = [];
+    if (s.roster.some((x) => x.kind === kind && x.id === m.id)) return;
+    s.roster.push({ id: m.id, kind, name: m.name, level: m.level, look: m.look || 0, from });
+    // Carnet limité à 20 personnes par poste : on oublie d'abord les moins bons (jamais quelqu'un sous contrat).
+    const mine = s.roster.filter((x) => x.kind === kind);
+    if (mine.length > 20) {
+      const busy = (x) => this.contracted(kind).some((c) => c.id === x.id);
+      const drop = mine.filter((x) => !busy(x)).sort((a, b) => a.level - b.level)[0];
+      if (drop) s.roster = s.roster.filter((x) => x !== drop);
+    }
+  }
+  contracted(kind) {
+    const s = this.state;
+    if (kind === 'cashier') return s.staff.cashiers.filter((c) => c.days > 0);
+    return s.staff.stocker && s.staff.stocker.days > 0 ? [s.staff.stocker] : [];
+  }
+  postsFor(kind) {
+    return kind === 'cashier' ? this.state.registers.length : 1;
+  }
+  putUnderContract(kind, member) {
+    const s = this.state;
+    if (kind === 'cashier') s.staff.cashiers = [...s.staff.cashiers.filter((c) => c.days > 0), member];
+    else s.staff.stocker = member;
+    // un poste vient d'être pris : l'intérimaire se replace (poste libre, sinon le moins bon, sinon au repos)
+    if (this.tempActive() && this.state.temp.kind === kind) this.placeTemp();
+    this.syncStaff();
+  }
+  // Embaucher quelqu'un du carnet, au prix normal (mêmes salaires que les candidats).
+  hireKnown(kind, id) {
+    const s = this.state;
+    const def = STAFF[kind];
+    if (!def) return { ok: false };
+    if (this.tempActive() && s.temp.member.id === id) return { ok: false, reason: 'Intérimaire aujourd’hui : embauche possible dès demain' };
+    const m = (s.roster || []).find((x) => x.kind === kind && x.id === id);
+    if (!m) return { ok: false, reason: 'Inconnu' };
+    if (s.level < def.level) return { ok: false, reason: `Niveau ${def.level} requis` };
+    if (this.contracted(kind).some((c) => c.id === id)) return { ok: false, reason: 'Déjà sous contrat' };
+    if (this.contracted(kind).length >= this.postsFor(kind)) return { ok: false, reason: kind === 'cashier' ? 'Une personne par caisse au maximum' : 'Un magasinier est déjà sous contrat' };
+    const cost = this.staffCost(kind, m.level);
+    if (s.coins < cost) return { ok: false, reason: 'Pas assez de pièces' };
+    s.coins -= cost;
+    const member = { id: m.id, name: m.name, level: m.level, look: m.look, days: CONTRACT_DAYS };
+    this.putUnderContract(kind, member);
+    this.emit('sfx', { name: 'buy' });
+    return { ok: true, member };
+  }
+  tempActive() {
+    const t = this.state.temp;
+    return !!(t && t.day === this.state.day && this.state.phase !== 'summary');
+  }
+  // Où met-on l'intérimaire ? Poste libre → il le prend. Sinon il remplace le moins bon employé de ce poste
+  // s'il est MEILLEUR que lui. Sinon il reste au repos (le joueur peut le faire travailler dans « Mon équipe »).
+  placeTemp() {
+    const t = this.state.temp;
+    if (!t) return;
+    const team = this.contracted(t.kind);
+    if (team.length < this.postsFor(t.kind)) { t.onDuty = true; t.replaces = null; return; }
+    const worst = [...team].sort((a, b) => a.level - b.level)[0];
+    if (worst && t.member.level > worst.level) { t.onDuty = true; t.replaces = worst.id; return; }
+    t.onDuty = false;
+    t.replaces = null;
+  }
+  // Choix du joueur dans « Mon équipe », sans aucun coût : replaces = id d'un employé, 'free' = poste libre,
+  // null = intérimaire au repos (l'employé habituel reprend).
+  setTempDuty(replaces) {
+    const s = this.state;
+    if (!this.tempActive()) return { ok: false, reason: 'Pas d’intérimaire aujourd’hui' };
+    const t = s.temp;
+    const team = this.contracted(t.kind);
+    if (replaces == null) { t.onDuty = false; t.replaces = null; }
+    else if (replaces === 'free') {
+      if (team.length >= this.postsFor(t.kind)) return { ok: false, reason: 'Aucun poste libre' };
+      t.onDuty = true; t.replaces = null;
+    } else {
+      if (!team.some((c) => c.id === replaces)) return { ok: false, reason: 'Introuvable' };
+      t.onDuty = true; t.replaces = replaces;
+    }
+    this.syncStaff();
+    this.emit('save');
+    return { ok: true };
+  }
+  // Qui travaille vraiment aujourd'hui (contrats + intérimaire), dans l'ordre des caisses.
+  dutyCashiers() {
+    const list = this.contracted('cashier');
+    const t = this.state.temp;
+    if (!this.tempActive() || t.kind !== 'cashier' || !t.onDuty) return list;
+    const i = list.findIndex((c) => c.id === t.replaces);
+    const temp = { ...t.member, temp: true, days: 1 };
+    if (i >= 0) return list.map((c, k) => (k === i ? temp : c));
+    return [...list, temp];
+  }
+  dutyStocker() {
+    const st = this.contracted('stocker')[0] || null;
+    const t = this.state.temp;
+    if (this.tempActive() && t.kind === 'stocker' && t.onDuty && (!st || t.replaces === st.id)) return { ...t.member, temp: true, days: 1 };
+    return st;
+  }
+  // Caisse choisie pour un caissier (« Mon équipe ») : les deux caissiers échangent leur place.
+  setCashierRegister(id, regId) {
+    const s = this.state;
+    if (!s.registers.includes(regId)) return { ok: false };
+    const duty = this.dutyCashiers();
+    const m = duty.find((c) => c.id === id);
+    if (!m) return { ok: false, reason: 'Ne travaille pas aujourd’hui' };
+    const prefs = s.cashierRegs || (s.cashierRegs = {});
+    const cur = this.cashierAssignments();
+    let oldReg = null;
+    for (const [r, c] of cur) if (c.id === id) oldReg = r;
+    for (const [r, c] of cur) if (r === regId && c.id !== id) prefs[c.id] = oldReg ?? s.registers.find((x) => x !== regId);
+    prefs[id] = regId;
+    this.emit('save');
+    return { ok: true };
+  }
+
+  // ------------------------------------------------------------- coffres et bilan doublé (V1.6)
+  // Appelé APRÈS la pub simulée (ou directement quand la simulation des pubs est coupée). rng : tirage (tests).
+  claimReward(kind, { now = Date.now(), rng = Math.random, ad = true } = {}) {
+    const s = this.state;
+    const st = rewardStatus(s, kind);
+    if (!st.ok) return { ok: false, reason: st.reason };
+    if (!s.rewards) s.rewards = emptyRewards();
+    s.rewards.used[kind] = s.day;
+    if (ad) noteAd(s, now);
+    let res;
+    if (kind === 'cashier' || kind === 'stocker') res = this.openStaffChest(kind, rng);
+    else if (kind === 'deco') res = this.openDecoChest(rng);
+    else res = this.doubleProfit();
+    this.emit('save');
+    return res;
+  }
+  openStaffChest(kind, rng) {
+    const s = this.state;
+    const roll = rollStars(s.rewards.pity, rng);
+    s.rewards.pity = roll.pity;
+    const used = new Set([...this.contracted('cashier'), ...this.contracted('stocker')].map((m) => m.name));
+    let name = FIRST_NAMES[Math.floor(rng() * FIRST_NAMES.length)];
+    for (let k = 0; k < 12 && used.has(name); k++) name = FIRST_NAMES[Math.floor(rng() * FIRST_NAMES.length)];
+    const member = { id: this.newStaffId(), name, level: roll.stars, look: Math.floor(rng() * 6) };
+    s.temp = { day: s.day, kind, member, replaces: null, onDuty: false };
+    this.placeTemp();
+    const replaced = s.temp.replaces != null ? this.contracted(kind).find((c) => c.id === s.temp.replaces) : null;
+    this.syncStaff();
+    return { ok: true, kind, member, stars: roll.stars, guaranteed: roll.guaranteed, onDuty: s.temp.onDuty, replaced: replaced ? replaced.name : null };
+  }
+  openDecoChest(rng) {
+    const s = this.state;
+    if (!s.deco) s.deco = emptyDeco();
+    const d = rollDeco(s.deco.owned, rng);
+    if (!d) return { ok: false, reason: 'Tu as toutes les décorations' };
+    s.deco.owned.push(d.id);
+    if (!s.deco.placed[d.slot]) s.deco.placed[d.slot] = d.id; // posée tout de suite si l'emplacement est vide
+    return { ok: true, kind: 'deco', deco: d, placed: s.deco.placed[d.slot] === d.id };
+  }
+  doubleProfit() {
+    const s = this.state;
+    const sum = s.lastSummary;
+    const bonus = sum.profit;
+    s.coins += bonus;
+    sum.doubled = true;
+    sum.bonus = bonus;
+    return { ok: true, kind: 'double', bonus };
+  }
+  // Aménager → Décorations : poser (id) ou retirer (null) une décoration. Aucun effet sur le jeu.
+  placeDeco(slot, id) {
+    const s = this.state;
+    if (!s.deco) s.deco = emptyDeco();
+    if (!(slot in s.deco.placed)) return { ok: false };
+    if (id != null && (!s.deco.owned.includes(id) || !DECO_BY_ID[id] || DECO_BY_ID[id].slot !== slot)) return { ok: false, reason: 'Décoration inconnue' };
+    s.deco.placed[slot] = id;
+    this.emit('save');
+    return { ok: true };
   }
 
   extend(kind, memberId) {
@@ -631,13 +850,18 @@ export class Game {
   }
 
   syncStaff() {
-    const s = this.state;
-    const st = s.staff.stocker;
-    if (st && st.days > 0 && !this.stocker) {
+    // V1.6 : le magasinier qui travaille peut être l'intérimaire du jour.
+    const st = this.dutyStocker();
+    if (st && this.stocker && this.stocker.memberId !== st.id) {
+      // Remplacement immédiat, en pleine journée : le carton porté et la tâche en cours sont gardés.
       const lv = STOCKER_LEVELS[st.level - 1];
-      this.stocker = this.makeAgent(STOCKER_HOME.r, STOCKER_HOME.c, { kind: 'stocker', level: st.level, speed: lv.speed, perUnit: lv.perUnit, carry: null, idle: 0, task: null, name: st.name, lookIndex: st.look, look: staffLook(st) });
+      Object.assign(this.stocker, { level: st.level, speed: lv.speed, perUnit: lv.perUnit, name: st.name, lookIndex: st.look, look: staffLook(st), memberId: st.id, temp: !!st.temp });
     }
-    if ((!st || st.days <= 0) && this.stocker) {
+    if (st && !this.stocker) {
+      const lv = STOCKER_LEVELS[st.level - 1];
+      this.stocker = this.makeAgent(STOCKER_HOME.r, STOCKER_HOME.c, { kind: 'stocker', level: st.level, speed: lv.speed, perUnit: lv.perUnit, carry: null, idle: 0, task: null, name: st.name, lookIndex: st.look, look: staffLook(st), memberId: st.id, temp: !!st.temp });
+    }
+    if (!st && this.stocker) {
       if (this.stocker.carry) {
         const c = this.stocker.carry;
         this.stocker.carry = null;
@@ -932,7 +1156,7 @@ export class Game {
       pop: s.reputation > 85 ? 0.5 : s.reputation > 60 ? 1 : 2
     };
     // « Monnaie juste » seulement si le joueur peut encore tenir une caisse lui-même.
-    const allStaffed = s.staff.cashiers.filter((c) => c.days > 0).length >= s.registers.length;
+    const allStaffed = this.dutyCashiers().length >= s.registers.length;
     const kinds = Object.keys(GOAL_KINDS).filter((k) => !(k === 'perfect' && allStaffed));
     const list = [];
     while (s.day >= GOALS_FROM_DAY && list.length < GOALS_PER_DAY) {
@@ -1026,10 +1250,17 @@ export class Game {
       s.staff.stocker = null;
     }
     summary.staffErrors = s.stats.staffErrors || 0;
+    // V1.6 : l'intérimaire part (il a fini de servir les derniers clients) et rejoint le carnet.
+    if (s.temp) {
+      summary.tempLeft = s.temp.member.name;
+      this.addToRoster(s.temp.kind, s.temp.member, 'coffre');
+      s.temp = null;
+    }
     s.totals.revenue += s.stats.revenue;
     s.totals.days++;
     s.lastSummary = summary;
     s.phase = 'summary';
+    this.syncStaff();
     this.leaveRegister();
     this.emit('phase', { phase: 'summary', summary });
     this.emit('save');
@@ -1090,7 +1321,8 @@ export class Game {
     let choix = Math.max(-1, Math.min(1.5, 0.25 * types - 1));
     if (fill < 0.2) choix -= 0.8;
     else if (fill > 0.6) choix += 0.4;
-    const team = [...s.staff.cashiers, ...(s.staff.stocker ? [s.staff.stocker] : [])];
+    const st = this.dutyStocker();
+    const team = [...this.dutyCashiers(), ...(st ? [st] : [])];
     const personnel = Math.max(-0.5, Math.min(1, team.reduce((a, m) => a + 0.12 * (m.level - 2), 0)));
     return { choix, personnel };
   }

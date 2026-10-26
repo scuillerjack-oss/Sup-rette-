@@ -157,11 +157,18 @@ export const STOCKER_LEVELS = [
 // Apparence fixe d'un employé (V1.4) : tirée de son numéro « look », jamais au hasard à l'affichage.
 const STAFF_SKINS = ['#f6d3b3', '#c98d63', '#e8b48f', '#9c6644', '#f1c7a5', '#6f4a33'];
 const STAFF_HAIRS = ['#a8642e', '#2b1d14', '#e6c068', '#5a3a22', '#1f1f1f', '#c0462b'];
+export const FIRST_NAMES = ['Léa', 'Momo', 'Inès', 'Hugo', 'Sarah', 'Karim', 'Chloé', 'Lucas', 'Nadia', 'Tom', 'Jade', 'Yanis', 'Manon', 'Enzo', 'Lina', 'Bilal', 'Zoé', 'Théo', 'Amel', 'Noah'];
+// V1.6 : 10 prénoms de femmes, 10 d'hommes. L'apparence suit le prénom (une Léa n'a jamais l'allure d'un homme).
+export const FEMALE_NAMES = ['Léa', 'Inès', 'Sarah', 'Chloé', 'Nadia', 'Jade', 'Manon', 'Lina', 'Zoé', 'Amel'];
+export function genderOf(name) {
+  return FEMALE_NAMES.includes(name) ? 'f' : 'h';
+}
+// Coiffures : 0 = courte (hommes) ; 1 = cheveux longs, 2 = chignon (femmes, avec un nœud de couleur).
 export function staffLook(member) {
   const k = Math.abs(Math.floor(Number(member && member.look) || 0));
-  return Object.freeze({ skin: STAFF_SKINS[k % 6], hair: STAFF_HAIRS[(k + 1) % 6], hairStyle: k % 3 });
+  const female = genderOf(member && member.name) === 'f';
+  return Object.freeze({ skin: STAFF_SKINS[k % 6], hair: STAFF_HAIRS[(k + 1) % 6], hairStyle: female ? 1 + (k % 2) : 0, female });
 }
-export const FIRST_NAMES = ['Léa', 'Momo', 'Inès', 'Hugo', 'Sarah', 'Karim', 'Chloé', 'Lucas', 'Nadia', 'Tom', 'Jade', 'Yanis', 'Manon', 'Enzo', 'Lina', 'Bilal', 'Zoé', 'Théo', 'Amel', 'Noah'];
 // Meilleur niveau de candidat proposé selon le niveau du magasin.
 export function maxCandidateLevel(storeLevel) {
   return Math.min(5, 1 + Math.floor((storeLevel - 1) / 4));

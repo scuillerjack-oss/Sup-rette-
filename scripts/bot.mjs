@@ -6,16 +6,25 @@ import { PRODUCTS, PRODUCT_BY_ID, SHELF_SLOTS, SHELF_CAPACITY, ZONES, REGISTERS,
 // overcharge (V1.5, test anti-triche) : centimes encaissés EN TROP à chaque client (carte : montant tapé plus
 // haut ; espèces : monnaie rendue en moins, dans la limite de ce qu'il y a à rendre).
 // noInvest : ne rien acheter d'autre que la marchandise (pour comparer des pièces à pièces).
-export function playBot({ days = 30, skill = 1, log = false, maxRealSeconds = 1e9, overcharge = 0, noInvest = false } = {}) {
+// chests (V1.6) : joueur qui ouvre TOUS les coffres (caissier, magasinier, déco) chaque jour et double chaque bilan
+// en bénéfice. rng : tirage des coffres (graine pour des mesures reproductibles).
+export function playBot({ days = 30, skill = 1, log = false, maxRealSeconds = 1e9, overcharge = 0, noInvest = false, chests = false, rng = Math.random } = {}) {
   const g = new Game();
   g.speed = 1;
   const marks = {};
   const dayStats = [];
+  const chestLog = { opened: 0, stars: [0, 0, 0, 0, 0], doubled: 0, doubleCoins: 0, onDuty: 0 };
   let simSeconds = 0;
   for (let d = 0; d < days; d++) {
     const s = g.state;
     // --- Préparation : achats
     if (!noInvest) invest(g);
+    if (chests) {
+      for (const kind of ['cashier', 'stocker', 'deco']) {
+        const r = g.claimReward(kind, { rng, now: 0, ad: true });
+        if (r.ok && r.stars) { chestLog.opened++; chestLog.stars[r.stars - 1]++; if (r.onDuty) chestLog.onDuty++; }
+      }
+    }
     restock(g);
     for (let i = 0; i < 400 && (s.pending.length || g.deliveryCount()); i++) {
       step(g, 0.05, skill, overcharge);
@@ -30,6 +39,10 @@ export function playBot({ days = 30, skill = 1, log = false, maxRealSeconds = 1e
       if (guard % 200 === 0 && s.phase === 'open') restock(g);
     }
     if (s.phase !== 'summary') throw new Error(`Journée ${s.day} bloquée`);
+    if (chests) {
+      const r = g.claimReward('double', { rng, now: 0, ad: true });
+      if (r.ok) { chestLog.doubled++; chestLog.doubleCoins += r.bonus; }
+    }
     dayStats.push({ ...s.lastSummary, level: s.level, coins: s.coins });
     if (log) console.log(`J${s.day} niv${s.level} pièces ${(s.coins / 100).toFixed(0)} clients ${s.lastSummary.served} fâchés ${s.lastSummary.angry} manquants ${s.lastSummary.missing} rep ${s.reputation.toFixed(0)}`);
     for (const L of [5, 10, 15, 20, 25]) if (s.level >= L && marks[`level${L}`] == null) marks[`level${L}`] = s.day;
@@ -37,7 +50,7 @@ export function playBot({ days = 30, skill = 1, log = false, maxRealSeconds = 1e
     g.nextDay();
     if (simSeconds > maxRealSeconds) break;
   }
-  return { game: g, marks, dayStats, simSeconds };
+  return { game: g, marks, dayStats, simSeconds, chestLog };
 }
 
 function hasUsefulCarton(g) {
@@ -163,6 +176,7 @@ function step(g, dt, skill, overcharge = 0) {
 
 if (process.argv[1] && process.argv[1].endsWith('bot.mjs')) {
   const days = parseInt(process.argv[2] || '40', 10);
-  const r = playBot({ days, log: true });
+  const r = playBot({ days, log: true, chests: process.argv.includes('--coffres') });
+  if (r.chestLog.opened || r.chestLog.doubled) console.log('Coffres :', r.chestLog);
   console.log('Repères (jour atteint) :', r.marks, `temps de jeu simulé ≈ ${(r.simSeconds / 3600).toFixed(1)} h`);
 }

@@ -5,6 +5,9 @@ import { cents } from './game.js';
 import { drawProduct, money } from './render.js';
 import { settings, sfx, haptic } from './audio.js';
 import { BUILD_VERSION } from './update.js';
+import { rewardStatus, forcedAdDue, noteAd, CHEST_ODDS, PITY_AFTER, REWARD_FROM_DAY, DECOS, DECO_BY_ID, DECO_SLOTS } from './rewards.js';
+import { showRewarded, showInterstitial } from './ads.js';
+import { hasManagerPack } from './shop.js';
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s).replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
@@ -87,6 +90,7 @@ export class UI {
     $('#btnMenu').onclick = () => this.open('menu');
     $('#btnPop').onclick = () => this.open('pop');
     $('#btnGoals').onclick = () => this.open('goals');
+    $('#btnChest').onclick = () => this.open('chests');
     $('#moveCancel').onclick = () => { this.g.cancelMove(); sfx('tick'); };
     $('#btnSpeed').onclick = () => {
       this.g.speed = this.g.speed === 1 ? 2 : this.g.speed === 2 ? 3 : 1;
@@ -205,6 +209,17 @@ export class UI {
       if (this.sheet && this.sheet.kind === 'goals') this.refreshSheet();
       btn.innerHTML = `${gs.length ? `<span>🎯 ${gs.filter((x) => x.done).length}/${gs.length}</span>` : ''}${ev ? `<span class="ev">${ev.icon} ${esc(ev.name)}</span>` : ''}`;
     }
+    // V1.6 : bouton des coffres (à partir du jour 3, jamais dans le tutoriel). Pastille = coffres encore dispo.
+    const chestOk = !s.tutoMode && s.day >= REWARD_FROM_DAY && (s.phase === 'prep' || s.phase === 'open');
+    const nChest = chestOk ? ['cashier', 'stocker', 'deco'].filter((k) => rewardStatus(s, k).ok).length : 0;
+    const ck = chestOk ? `${nChest}` : 'off';
+    if (this.last.chest !== ck) {
+      this.last.chest = ck;
+      const b = $('#btnChest');
+      b.hidden = !chestOk;
+      b.innerHTML = `🎁<span>Coffres</span>${nChest ? `<i>${nChest}</i>` : ''}`;
+      b.classList.toggle('none', !nChest);
+    }
     // Bulle « à la caisse »
     const p = this.g.player;
     const atReg = p.atRegister != null && !p.path.length && !this.g.checkout;
@@ -269,7 +284,8 @@ export class UI {
       zone: () => this.buildHtml(),
       menu: () => this.menuHtml(),
       pop: () => this.popHtml(),
-      goals: () => this.goalsHtml()
+      goals: () => this.goalsHtml(),
+      chests: () => this.chestsHtml()
     }[kind];
     const body = $('#sheetBody');
     const scroll = body.scrollTop;
@@ -348,6 +364,10 @@ export class UI {
   staffHtml() {
     const g = this.g;
     const s = g.state;
+    // V1.6 : deux onglets. « Mon équipe » = le carnet (tous les employés connus) ; « Candidats » = la semaine.
+    const tab = this.staffTab || ((s.tutoMode || !(s.roster || []).length) ? 'cands' : 'team');
+    const tabs = `<div class="tabs" role="tablist"><button role="tab" class="${tab === 'team' ? 'on' : ''}" data-a="staffTab" data-id="team">👥 Mon équipe</button><button role="tab" class="${tab === 'cands' ? 'on' : ''}" data-a="staffTab" data-id="cands">📋 Candidats</button></div>`;
+    if (tab === 'team') return `${this.head('Personnel', 'Qui travaille à quel poste. Changer en pleine journée ne coûte rien.')}${tabs}${this.teamHtml()}`;
     const stars = (n) => `<span class="stars" aria-label="Niveau ${n} sur 5">${'★'.repeat(n)}<i>${'★'.repeat(5 - n)}</i></span>`;
     const stats = (kind, level) => {
       if (kind === 'cashier') {
@@ -384,7 +404,7 @@ export class UI {
       const note = full ? `<p class="empty">${kind === 'cashier' ? 'Une personne par caisse au maximum.' : 'Un magasinier à la fois.'}</p>` : '';
       return `<h3 class="sec">${d.label}s · candidats de la semaine</h3>${note}<div class="list">${list}</div>`;
     };
-    return `${this.head('Personnel', 'Contrats de 7 journées payés d’avance. Plus d’étoiles : plus rapide, moins d’erreurs, plus cher.')}
+    return `${this.head('Personnel', 'Contrats de 7 journées payés d’avance. Plus d’étoiles : plus rapide, moins d’erreurs, plus cher.')}${tabs}
       <h3 class="sec">Ton équipe</h3><div class="list">${teamHtml}</div>
       ${section('cashier')}${section('stocker')}
       <div class="explain"><b>👷 Comment travaille le magasinier ?</b>
@@ -392,6 +412,122 @@ export class UI {
         <p>Les étoiles changent seulement sa vitesse et son initiative : ⭐ il ne s’occupe d’un rayon que lorsqu’il est vide ou presque (sous 40 %) et réfléchit un moment entre deux cartons ; ⭐⭐⭐⭐⭐ il complète les rayons dès qu’il y manque quelques articles et enchaîne sans attendre.</p>
         <p>Une étagère neuve sans produit reçoit un produit qui n’a pas encore de rayon. Pour changer le produit d’un rayon, c’est toi qui décides : vide-le et range-y un autre carton.</p></div>
       <p class="credits">Nouveaux candidats chaque semaine. Les meilleurs profils arrivent quand ton magasin monte de niveau.</p>`;
+  }
+
+  // V1.6 : « Mon équipe ». Tous les employés connus (embauchés ou gagnés en coffre), étoiles, poste, salaire.
+  teamHtml() {
+    const g = this.g;
+    const s = g.state;
+    const stars = (n) => `<span class="stars" aria-label="Niveau ${n} sur 5">${'★'.repeat(n)}<i>${'★'.repeat(5 - n)}</i></span>`;
+    const temp = g.tempActive() ? s.temp : null;
+    const cashMap = g.cashierAssignments();
+    const regOf = (id) => { for (const [r, c] of cashMap) if (c.id === id) return r; return null; };
+    const stockerNow = g.dutyStocker();
+    const cards = [];
+    for (const kind of ['cashier', 'stocker']) {
+      const d = STAFF[kind];
+      const people = [];
+      if (temp && temp.kind === kind) people.push({ m: temp.member, temp: true });
+      for (const m of (s.roster || []).filter((x) => x.kind === kind)) if (!(temp && temp.member.id === m.id)) people.push({ m });
+      cards.push(`<h3 class="sec">${d.label}s</h3>`);
+      if (s.level < d.level) { cards.push(`<p class="empty">Poste débloqué au niveau ${d.level}.</p>`); continue; }
+      if (!people.length) { cards.push('<p class="empty">Personne pour l’instant. Embauche dans « Candidats », ou ouvre un coffre 🎁.</p>'); continue; }
+      const list = people.sort((a, b) => (b.temp ? 1 : 0) - (a.temp ? 1 : 0) || b.m.level - a.m.level).map(({ m, temp: isTemp }) => {
+        const contract = g.contracted(kind).find((c) => c.id === m.id);
+        const wage = `${coinSvg}${money(g.staffCost(kind, m.level))} / semaine`;
+        let status;
+        let btns = '';
+        const working = kind === 'cashier' ? regOf(m.id) != null : stockerNow && stockerNow.id === m.id;
+        if (isTemp) {
+          status = `<span class="pill temp">Intérimaire jusqu’à 20 h · gratuit</span>`;
+          const team = g.contracted(kind);
+          const opts = [];
+          if (team.length < g.postsFor(kind) && !(temp.onDuty && temp.replaces == null)) opts.push(`<button class="ghost sm" data-a="tempDuty" data-id="free">Prendre le poste libre</button>`);
+          for (const c of team) if (!(temp.onDuty && temp.replaces === c.id)) opts.push(`<button class="ghost sm" data-a="tempDuty" data-id="${c.id}">À la place de ${esc(c.name)}</button>`);
+          if (temp.onDuty) opts.push(`<button class="ghost sm" data-a="tempDuty" data-id="rest">Au repos</button>`);
+          btns = opts.join('');
+        } else if (contract) {
+          status = working ? `<span class="pill good">Au travail · encore ${contract.days} jour${contract.days > 1 ? 's' : ''}</span>` : `<span class="pill ok">Au repos aujourd’hui · revient demain (contrat : ${contract.days} j)</span>`;
+          if (!working && temp && temp.kind === kind && temp.replaces === m.id) btns += `<button class="ghost sm" data-a="tempDuty" data-id="rest">Le remettre au poste</button>`;
+          btns += `<button class="buy sm" data-a="extend" data-kind="${kind}" data-id="${m.id}" ${s.coins < g.staffCost(kind, m.level) ? 'disabled' : ''}>+7 jours · ${coinSvg}${money(g.staffCost(kind, m.level))}</button>`;
+        } else {
+          status = `<span class="pill">Libre · ${m.from === 'coffre' ? 'gagné dans un coffre' : 'ancien employé'}</span>`;
+          const full = g.contracted(kind).length >= g.postsFor(kind);
+          btns = `<button class="buy sm" data-a="hireKnown" data-kind="${kind}" data-id="${m.id}" ${full || s.coins < g.staffCost(kind, m.level) ? 'disabled' : ''}>Embaucher 7 jours · ${coinSvg}${money(g.staffCost(kind, m.level))}</button>${full ? `<small class="why">${kind === 'cashier' ? 'Une personne par caisse : attends la fin d’un contrat.' : 'Un magasinier à la fois.'}</small>` : ''}`;
+        }
+        if (kind === 'cashier' && working && s.registers.length > 1) {
+          const r = regOf(m.id);
+          btns += s.registers.filter((x) => x !== r && x !== g.player.atRegister).map((x) => `<button class="ghost sm" data-a="toReg" data-id="${m.id}" data-reg="${x}">Aller en caisse ${x}</button>`).join('');
+        }
+        const where = kind === 'cashier' && working ? ` · caisse ${regOf(m.id)}` : '';
+        return `<div class="card team ${isTemp ? 'is-temp' : ''}">
+          <div class="avatar ${kind}" aria-hidden="true">${kind === 'cashier' ? '🧑‍💼' : '👷'}</div>
+          <div class="info"><b>${esc(m.name)} ${stars(m.level)}</b><span>${d.label}${where} · ${wage}</span>${status}</div>
+          ${btns ? `<div class="tbtns">${btns}</div>` : ''}
+        </div>`;
+      }).join('');
+      cards.push(`<div class="list">${list}</div>`);
+    }
+    return `${cards.join('')}<p class="credits">L’intérimaire gagné dans un coffre travaille gratuitement jusqu’à 20 h, puis rejoint ce carnet : tu pourras l’embaucher au prix normal.</p>`;
+  }
+
+  // V1.6 : coffres du jour (pub simulée). Le joueur choisit ; s'il ne touche à rien, aucune pub.
+  chestsHtml() {
+    const g = this.g;
+    const s = g.state;
+    const odds = `<div class="odds" aria-label="Chances">${CHEST_ODDS.map((p, i) => `<span><b>${i + 1}★</b>${p} %</span>`).join('')}</div>`;
+    const pity = Math.max(0, PITY_AFTER - ((s.rewards && s.rewards.pity) || 0));
+    const pityTxt = pity === 0 ? '<b>Le prochain coffre d’employé donne forcément un 4★ ou un 5★.</b>' : `Garantie : 4★ ou 5★ au plus tard dans ${pity + 1} coffre${pity + 1 > 1 ? 's' : ''} d’employé.`;
+    const card = (kind, ico, title, txt, extra = '') => {
+      const st = rewardStatus(s, kind);
+      return `<div class="chest-card ${st.ok ? '' : 'off'}">
+        <div class="chest-ico" aria-hidden="true">${ico}</div>
+        <div class="info"><b>${title}</b><span>${txt}</span>${extra}${st.ok ? '' : `<span class="pill">${esc(st.reason)}</span>`}</div>
+        <button class="buy" data-a="chest" data-id="${kind}" ${st.ok ? '' : 'disabled'}>${settings.simAds ? '📺 Pub<small>puis ouvrir</small>' : 'Ouvrir<small>(pubs coupées)</small>'}</button>
+      </div>`;
+    };
+    const owned = (s.deco && s.deco.owned.length) || 0;
+    return `${this.head('🎁 Coffres du jour', 'Chaque coffre : 1 fois par journée de jeu, en échange d’une pub. C’est toi qui choisis.')}
+      <div class="list">
+        ${card('cashier', '🧑‍💼', 'Coffre caissier', 'Un caissier intérimaire de 1 à 5★, gratuit jusqu’à 20 h.', odds)}
+        ${card('stocker', '👷', 'Coffre magasinier', 'Un magasinier intérimaire de 1 à 5★, gratuit jusqu’à 20 h.', odds)}
+        ${card('deco', '🪴', 'Coffre déco', `Une décoration pour ton magasin, sans effet sur le jeu (${owned}/${DECOS.length}).`)}
+      </div>
+      <p class="credits">${pityTxt} S’il est meilleur que ton employé, l’intérimaire le remplace tout de suite ; ton employé garde son contrat et revient demain. Ensuite, il rejoint « Mon équipe ».</p>
+      <p class="credits">${settings.simAds ? 'Bêta : les pubs sont simulées (aucune vraie pub). Réglage dans le menu ☰.' : 'Pubs simulées coupées dans le menu ☰ : les coffres s’ouvrent directement.'} Pas envie ? Ferme simplement : aucune pub.</p>`;
+  }
+
+  // Pub récompensée (simulée) puis récompense. Refus ou pub fermée avant la fin : aucune récompense, aucune autre pub.
+  async watchFor(kind) {
+    const g = this.g;
+    if (this.adBusy) return null;
+    const st = rewardStatus(g.state, kind);
+    if (!st.ok) { this.toast(st.reason, 'warn'); return null; }
+    if (settings.simAds) {
+      this.adBusy = true;
+      const wasPaused = g.paused;
+      g.paused = true;
+      let r;
+      try { r = await showRewarded(kind); } finally { g.paused = wasPaused; this.adBusy = false; }
+      if (!r.watched) {
+        if (!g.state.rewards) g.state.rewards = {};
+        g.state.rewards.lastAdAt = Date.now();
+        this.toast('Pub fermée avant la fin : pas de récompense', 'warn');
+        return null;
+      }
+    }
+    const res = g.claimReward(kind, { ad: settings.simAds });
+    if (!res.ok) { this.toast(res.reason || 'Indisponible', 'warn'); return null; }
+    return res;
+  }
+
+  // Animation d'ouverture du coffre (CSS : transform et opacité seulement, fluide sur téléphone).
+  showChest(res) {
+    this.close();
+    this.modals = [{ kind: 'chest', data: res }, ...(this.modalOpen ? [this.modalOpen] : []), ...(this.modals || [])];
+    this.nextModal();
+    sfx('level');
+    haptic(30);
   }
 
   buildHtml() {
@@ -419,7 +555,24 @@ export class UI {
       items.push(`<div class="card"><div class="ico">🧾</div><div class="info"><b>Deuxième caisse</b><span>Deux files d’attente : idéal avec une caissière.</span>${locked && !owned ? `<span class="pill">Niveau ${r.level}</span>` : ''}</div>
         ${owned ? '<span class="pill good">Installée</span>' : `<button class="buy" data-a="register" data-id="${r.id}" ${locked || s.coins < cents(r.cost) ? 'disabled' : ''}>${coinSvg}${money(cents(r.cost))}</button>`}</div>`);
     }
-    return `${this.head('Aménager', `Charges du jour : ${money(cents(dailyCharges(s)))} (loyer et électricité)`)}<div class="list">${items.join('')}</div>`;
+    return `${this.head('Aménager', `Charges du jour : ${money(cents(dailyCharges(s)))} (loyer et électricité)`)}<div class="list">${items.join('')}</div>${this.decoHtml()}`;
+  }
+
+  // V1.6 : décorations gagnées dans le coffre déco. Sans aucun effet sur le jeu.
+  decoHtml() {
+    const s = this.g.state;
+    const d = s.deco || { owned: [], placed: {} };
+    const rows = Object.entries(DECO_SLOTS).map(([slot, def]) => {
+      const mine = d.owned.filter((id) => DECO_BY_ID[id] && DECO_BY_ID[id].slot === slot);
+      const total = DECOS.filter((x) => x.slot === slot).length;
+      const chips = mine.map((id) => {
+        const x = DECO_BY_ID[id];
+        return `<button class="dchip ${d.placed[slot] === id ? 'on' : ''}" data-a="deco" data-slot="${slot}" data-id="${id}"><i style="background:linear-gradient(135deg,${x.colors[0]},${x.colors[1]})"></i>${esc(x.name)}</button>`;
+      }).join('');
+      return `<div class="card deco"><div class="ico">${def.icon}</div><div class="info"><b>${def.label} · ${mine.length}/${total}</b>
+        ${mine.length ? `<div class="dchips"><button class="dchip ${d.placed[slot] ? '' : 'on'}" data-a="deco" data-slot="${slot}" data-id="">D’origine</button>${chips}</div>` : '<span>À gagner dans le coffre déco 🎁</span>'}</div></div>`;
+    }).join('');
+    return `<h3 class="sec">🎨 Décorations</h3><p class="empty">Pour le plaisir des yeux : aucun effet sur les clients ni sur la popularité.</p><div class="list">${rows}</div>`;
   }
 
   popHtml() {
@@ -514,6 +667,7 @@ export class UI {
         ${this.tutoMenuHtml()}
         <div class="row"><div class="info"><b>Sons</b><span>Bips, caisse, livraisons</span></div><button class="toggle ${settings.sound ? 'on' : ''}" data-a="sound">${settings.sound ? 'Activés' : 'Coupés'}</button></div>
         <div class="row"><div class="info"><b>Vibrations</b><span>Rayon vide, scan, passage de niveau</span></div><button class="toggle ${settings.haptics ? 'on' : ''}" data-a="haptics">${settings.haptics ? 'Activées' : 'Coupées'}</button></div>
+        <div class="row"><div class="info"><b>Simuler les pubs (bêta)</b><span>Fausses pubs de 3 s pour ressentir le rythme. Aucune vraie pub.</span></div><button class="toggle ${settings.simAds ? 'on' : ''}" data-a="simAds">${settings.simAds ? 'Activé' : 'Coupé'}</button></div>
         ${tuto ? '' : '<div class="row"><div class="info"><b>Nouvelle partie</b><span>Recommencer au jour 1 (sons et vibrations gardés)</span></div><button class="danger" data-a="reset">Recommencer</button></div>'}
       </div>
       <p class="credits">Version <b id="menuVersion">v${esc(BUILD_VERSION)}</b>${this.updateVersion ? ` · <button class="linkbtn" data-a="update">nouvelle version v${esc(this.updateVersion)} : mettre à jour</button>` : ''} · tout est dessiné par le code, sans achat ni diamant.</p>`;
@@ -543,6 +697,15 @@ export class UI {
       case 'pplus': g.setPrice(id, g.state.prices[id] + 10); sfx('tick'); break;
       case 'hire': res = g.hire(b.dataset.kind, Number(id)); if (res.ok) this.toast(`${res.member.name} rejoint l’équipe pour 7 jours`); break;
       case 'extend': res = g.extend(b.dataset.kind, Number(id)); if (res.ok) this.toast('Contrat prolongé de 7 jours'); break;
+      case 'staffTab': this.staffTab = id; sfx('tick'); break;
+      case 'hireKnown': res = g.hireKnown(b.dataset.kind, Number(id)); if (res.ok) this.toast(`${res.member.name} rejoint l’équipe pour 7 jours`); break;
+      case 'tempDuty': res = g.setTempDuty(id === 'rest' ? null : id === 'free' ? 'free' : Number(id)); if (res.ok) sfx('tick'); break;
+      case 'toReg': res = g.setCashierRegister(Number(id), Number(b.dataset.reg)); if (res.ok) sfx('tick'); break;
+      case 'deco': res = g.placeDeco(b.dataset.slot, id || null); if (res.ok) sfx('tick'); break;
+      case 'chest':
+        this.watchFor(id).then((r) => { if (r) this.showChest(r); else this.refreshSheet(); });
+        return;
+      case 'simAds': settings.simAds = !settings.simAds; this.hooks.saveSettings(); break;
       case 'zone': res = g.buyZone(id); if (res.ok) this.toast('Travaux terminés : nouvelle allée !'); break;
       case 'register': res = g.buyRegister(id); if (res.ok) this.toast('Caisse 2 installée'); break;
       case 'shelf': res = g.buyShelf(id); if (res.ok) { this.toast('Étagère installée'); this.close(); return; } break;
@@ -675,7 +838,12 @@ export class UI {
     this.modalOpen = m;
     box.hidden = false;
     requestAnimationFrame(() => box.classList.add('show'));
+    this.renderModal(m);
+  }
+
+  renderModal(m) {
     const card = $('#modalCard');
+    card.classList.toggle('chest-card-modal', m.kind === 'chest');
     if (m.kind === 'level') {
       card.innerHTML = `<div class="burst">⭐</div><h2>Niveau ${m.data.level} !</h2>
         ${m.data.unlocked.length ? `<ul>${m.data.unlocked.map((u) => `<li>${esc(u)}</li>`).join('')}</ul>` : '<p>Ta supérette gagne en réputation.</p>'}
@@ -702,14 +870,51 @@ export class UI {
           ${line('Loyer et charges', `−${money(d.charges)}`)}
           ${d.goalCoins ? line('Primes d’objectifs', `+${money(d.goalCoins)}`, 'pos') : ''}
           ${line('Résultat', `${d.profit >= 0 ? '+' : ''}${money(d.profit)}`, d.profit >= 0 ? 'big pos' : 'big neg')}
+          ${d.doubled ? line('📺 Bénéfice doublé', `+${money(d.bonus)}`, 'big pos dbl') : ''}
         </div>
+        ${this.doubleHtml(d)}
         <div class="chips"><span>🧺 ${d.served} clients</span><span>📦 ${d.sold} articles</span>${d.missing ? `<button class="warn chipbtn" data-a="missingHelp" aria-label="Qu’est-ce que c’est ?">❓ ${d.missing} demande${d.missing > 1 ? 's' : ''} non satisfaite${d.missing > 1 ? 's' : ''} <i>?</i></button>` : ''}${d.angry ? `<span class="warn">😠 ${d.angry} partis fâchés</span>` : ''}${d.staffErrors ? `<span class="warn">🧾 ${d.staffErrors} erreur${d.staffErrors > 1 ? 's' : ''} de caisse</span>` : ''}<span>${popIcon(d.reputation)} popularité ${Math.round(d.reputation)} %</span></div>
         <div class="missing-help" hidden>${missingHelp(d.missingBy)}</div>
         ${popRows(d.rep)}
         ${d.goals && d.goals.length ? `<div class="sumgoals"><b>🎯 Objectifs : ${d.goals.filter((x) => x.done).length}/${d.goals.length}${d.goalCoins ? ` · +${money(d.goalCoins)} pièces` : ''}</b>${d.goals.map((x) => `<span class="${x.done ? 'ok' : 'ko'}">${x.done ? '✔' : '✘'} ${esc(x.label)}</span>`).join('')}</div>` : ''}
         ${d.staffEnding.length ? `<p class="note">Fin de contrat : ${d.staffEnding.map(esc).join(', ')}. Pense à renouveler dans Personnel.</p>` : ''}
+        ${d.tempLeft ? `<p class="note ok">${esc(d.tempLeft)} (intérimaire) est parti à 20 h. Retrouve-le dans Personnel → Mon équipe.</p>` : ''}
         <button class="primary" data-a="next">Préparer le jour ${d.day + 1}</button>`;
+    } else if (m.kind === 'chest') {
+      card.innerHTML = this.chestRevealHtml(m.data);
     }
+  }
+
+  // Bouton « Bilan doublé » (pub simulée). Masqué avant le jour 3 et dans le tutoriel ; désactivé si perte.
+  doubleHtml(d) {
+    const s = this.g.state;
+    if (s.tutoMode || s.day < REWARD_FROM_DAY || d.day !== s.day || d.doubled) return '';
+    const st = rewardStatus(s, 'double', { summary: d });
+    if (st.used) return '';
+    if (st.loss) return `<div class="dbl-box off"><button class="ghost" disabled>📺 Doubler le bénéfice</button><small>Journée en perte : il n’y a pas de bénéfice à doubler.</small></div>`;
+    if (!st.ok) return '';
+    return `<div class="dbl-box"><button class="primary gold" data-a="double">📺 ${settings.simAds ? 'Pub' : 'Bonus'} : doubler le bénéfice (+${money(d.profit)})</button><small>Facultatif · 1 fois par journée</small></div>`;
+  }
+
+  chestRevealHtml(r) {
+    const stars = (n) => `<span class="cr-stars">${[1, 2, 3, 4, 5].map((i) => `<i class="${i <= n ? 'on' : ''}" style="--d:${0.95 + i * 0.12}s">★</i>`).join('')}</span>`;
+    let body;
+    if (r.kind === 'deco') {
+      const d = r.deco;
+      body = `<div class="cr-prize deco"><i style="background:linear-gradient(135deg,${d.colors[0]},${d.colors[1]})"></i></div>
+        <h2>${esc(d.name)}</h2><p class="reset-txt">${r.placed ? 'Déjà posée dans ton magasin ! ' : ''}Change-la quand tu veux dans <b>Aménager → Décorations</b>. Aucun effet sur le jeu.</p>`;
+    } else {
+      const label = STAFF[r.kind].label;
+      const where = r.replaced ? `Il remplace <b>${esc(r.replaced)}</b> tout de suite, sans frais. ${esc(r.replaced)} garde son contrat et revient demain.`
+        : r.onDuty ? 'Il prend le poste libre tout de suite.'
+        : 'Ton employé actuel est au moins aussi bon : l’intérimaire reste au repos. Tu peux le faire travailler dans Personnel → Mon équipe.';
+      body = `<div class="cr-prize staff ${r.stars >= 4 ? 'rare' : ''}">${r.kind === 'cashier' ? '🧑‍💼' : '👷'}</div>
+        <h2>${esc(r.member.name)}</h2>${stars(r.stars)}
+        <p class="cr-kind">${label} intérimaire · gratuit jusqu’à 20 h${r.guaranteed ? ' · <b>garantie 4★+</b>' : ''}</p>
+        <p class="reset-txt">${where} Ensuite, il rejoint ton carnet : embauche possible au prix normal.</p>`;
+    }
+    return `<div class="chest-stage" aria-hidden="true"><div class="rays"></div><div class="chest"><div class="lid"></div><div class="base"><span></span></div></div></div>
+      <div class="cr-body">${body}<button class="primary" data-a="ok">Super !</button></div>`;
   }
 
   // V1.5 : tutoriel proposé au tout premier lancement (jamais imposé).
@@ -758,9 +963,37 @@ export class UI {
       this.hooks.reset();
       return;
     }
+    if (b.dataset.a === 'double') {
+      this.watchFor('double').then((r) => {
+        if (r && this.modalOpen && this.modalOpen.kind === 'summary') {
+          this.modalOpen.data = this.g.state.lastSummary;
+          this.renderModal(this.modalOpen);
+          this.toast(`Bénéfice doublé : +${money(r.bonus)} pièces 🎉`);
+          sfx('level');
+        }
+      });
+      return;
+    }
     if (b.dataset.a === 'next') {
-      this.g.nextDay();
-      this.renderPhase();
+      if (this.adBusy) return;
+      const go = () => {
+        this.g.nextDay();
+        this.renderPhase();
+        sfx('tick');
+        this.nextModal();
+      };
+      // V1.6 : pub imposée simulée, uniquement ici (au bilan), voir src/rewards.js → forcedAdDue.
+      const s = this.g.state;
+      const now = Date.now();
+      if (forcedAdDue(s, now, { simulate: settings.simAds, noForced: hasManagerPack() })) {
+        this.adBusy = true;
+        noteAd(s, now, { forced: true });
+        this.hooks.save();
+        showInterstitial().then(() => { this.adBusy = false; go(); });
+        return;
+      }
+      go();
+      return;
     }
     sfx('tick');
     this.nextModal();

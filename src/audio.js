@@ -1,7 +1,8 @@
 // Effets sonores synthétisés (aucun fichier) + vibrations optionnelles.
 let ctx = null;
 let master = null;
-export const settings = { sound: true, haptics: true };
+// simAds (V1.6) : « Simuler les pubs (bêta) », activé par défaut (fausses pubs de src/ads.js, aucune vraie pub).
+export const settings = { sound: true, haptics: true, simAds: true };
 
 function ensure() {
   if (ctx) return ctx;

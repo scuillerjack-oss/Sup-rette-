@@ -310,6 +310,74 @@ body.tuto #hint { display: none !important; }
 .tutorow .btns button { padding: 8px 12px; border-radius: 12px; font-weight: 800; min-height: 40px; }
 .tutorow .btns .ghost { background: var(--soft); color: var(--teal); }
 .tutorow .btns .primary { background: var(--orange); color: #fff; }
+
+/* V1.6 : coffres, équipe, décorations, pub simulée */
+#btnChest { position: absolute; left: 8px; top: 50px; z-index: 2; display: flex; align-items: center; gap: 4px; background: linear-gradient(135deg, #ffd36b, #ff9d52); color: #6b2f00; border-radius: 999px; padding: 6px 10px 6px 8px; font-family: var(--display); font-weight: 800; font-size: 0.85rem; box-shadow: 0 3px 10px rgba(0,0,0,0.18); min-height: 36px; }
+#btnChest i { font-style: normal; background: #e8483d; color: #fff; border-radius: 999px; min-width: 20px; height: 20px; line-height: 20px; text-align: center; font-size: 0.75rem; }
+#btnChest.none { background: rgba(255,255,255,0.85); color: var(--muted); }
+.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; background: var(--soft); border-radius: 14px; padding: 4px; margin: 2px 0 6px; }
+.tabs button { min-height: 40px; border-radius: 11px; font-weight: 800; color: var(--muted); }
+.tabs button.on { background: #fff; color: var(--teal); box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+.card.team { grid-template-columns: 48px 1fr; }
+.card.team .tbtns { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.card.team.is-temp { background: #fff4dc; box-shadow: inset 0 0 0 2px #ffcf6b; }
+.pill.temp { background: #ffcf6b; color: #6b3d00 !important; }
+.sm { padding: 8px 10px !important; font-size: 0.8rem !important; min-height: 40px; border-radius: 12px; flex-direction: row; gap: 4px; }
+.ghost.sm { background: #fff; }
+.why { width: 100%; text-align: right; color: var(--muted); font-size: 0.74rem; font-weight: 700; }
+.chest-card { display: grid; grid-template-columns: 52px 1fr auto; gap: 10px; align-items: center; padding: 10px; border-radius: 18px; background: linear-gradient(135deg, #fff7e3, #ffecd2); box-shadow: inset 0 0 0 2px #ffd9a3; }
+.chest-card.off { background: var(--soft); box-shadow: none; }
+.chest-ico { width: 52px; height: 52px; border-radius: 14px; background: #fff; display: grid; place-items: center; font-size: 1.8rem; }
+.odds { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+.odds span { background: #fff; border-radius: 8px; padding: 2px 6px; font-size: 0.72rem !important; font-weight: 800; color: var(--ink) !important; }
+.odds b { color: var(--gold); margin-right: 3px; }
+.dchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.dchip { display: flex; align-items: center; gap: 6px; background: #fff; border-radius: 10px; padding: 6px 8px; font-weight: 800; font-size: 0.76rem; color: var(--ink); min-height: 36px; box-shadow: inset 0 0 0 2px #e0e8e5; }
+.dchip.on { box-shadow: inset 0 0 0 2px var(--teal); color: var(--teal); }
+.dchip i { width: 18px; height: 18px; border-radius: 6px; display: inline-block; }
+.card.deco { grid-template-columns: 48px 1fr; }
+.dbl-box { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; }
+.dbl-box small { color: var(--muted); font-weight: 700; font-size: 0.75rem; }
+.dbl-box.off .ghost { width: 100%; }
+#modalCard .primary.gold { background: linear-gradient(135deg, #ffc93c, #ff9d52); color: #5a2a00; box-shadow: 0 4px 0 #c97a1c; font-size: 0.98rem; padding: 10px 12px; }
+.sum-row.dbl b { color: #c97a00 !important; }
+.note.ok { color: #1b7a4f; }
+/* Ouverture du coffre : transform/opacity uniquement */
+#modalCard.chest-card-modal { overflow: hidden; position: relative; }
+.chest-stage { position: relative; height: 130px; display: grid; place-items: center; }
+.chest-stage .rays { position: absolute; width: 260px; height: 260px; border-radius: 50%; background: repeating-conic-gradient(from 0deg, rgba(255,201,60,0.35) 0 12deg, transparent 12deg 24deg); opacity: 0; transform: scale(0.3); animation: crRays 2.4s 0.75s ease-out forwards; }
+.chest { position: relative; width: 104px; height: 82px; animation: crShake 0.7s ease-in-out; }
+.chest .base { position: absolute; left: 0; right: 0; bottom: 0; height: 52px; border-radius: 6px 6px 12px 12px; background: linear-gradient(#b5652a, #8a4519); box-shadow: inset 0 0 0 4px #e8a317, 0 6px 0 rgba(0,0,0,0.15); }
+.chest .base span { position: absolute; left: 50%; top: 4px; width: 18px; height: 22px; margin-left: -9px; border-radius: 4px; background: #ffd36b; box-shadow: inset 0 0 0 2px #b97c08; }
+.chest .lid { position: absolute; left: -2px; right: -2px; top: 0; height: 36px; border-radius: 30px 30px 4px 4px; background: linear-gradient(#cf7a36, #a3541f); box-shadow: inset 0 0 0 4px #e8a317; transform-origin: 50% 100%; animation: crLid 0.5s 0.7s cubic-bezier(.3,1.6,.6,1) forwards; }
+.cr-body { animation: crIn 0.45s 0.85s ease-out both; }
+.cr-prize { width: 84px; height: 84px; margin: -18px auto 6px; border-radius: 50%; display: grid; place-items: center; font-size: 2.8rem; background: #fff; box-shadow: 0 0 0 4px #ffe1a1, 0 10px 24px rgba(232,163,23,0.35); }
+.cr-prize.rare { box-shadow: 0 0 0 4px #c6a0ff, 0 0 30px rgba(198,160,255,0.85); }
+.cr-prize.deco i { width: 54px; height: 54px; border-radius: 14px; display: block; }
+.cr-stars { display: flex; justify-content: center; gap: 4px; font-size: 1.9rem; line-height: 1; margin: -2px 0 4px; }
+.cr-stars i { font-style: normal; color: #d8dfdc; transform: scale(0); animation: crStar 0.3s var(--d) ease-out forwards; }
+.cr-stars i.on { color: var(--gold); text-shadow: 0 2px 0 #b97c08; }
+.cr-kind { margin: 0 0 6px; font-weight: 800; color: var(--muted); font-size: 0.85rem; }
+@keyframes crShake { 0%, 100% { transform: none; } 20% { transform: rotate(-6deg); } 40% { transform: rotate(6deg); } 60% { transform: rotate(-4deg); } 80% { transform: rotate(3deg); } }
+@keyframes crLid { to { transform: translateY(-26px) rotate(-24deg); } }
+@keyframes crRays { 0% { opacity: 0; transform: scale(0.3) rotate(0); } 30% { opacity: 1; } 100% { opacity: 0.7; transform: scale(1) rotate(40deg); } }
+@keyframes crIn { from { opacity: 0; transform: translateY(14px); } }
+@keyframes crStar { to { transform: scale(1); } }
+#fakeAd { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: rgba(10,20,22,0.88); padding: 16px; animation: pop 0.2s ease-out; }
+#fakeAd.out { opacity: 0; transition: opacity 0.18s; }
+.fa-card { width: 100%; max-width: 360px; background: #1d2a30; color: #fff; border-radius: 22px; padding: 18px; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+.fa-tag { display: inline-block; background: #ffcf6b; color: #5a2a00; font-weight: 800; border-radius: 999px; padding: 3px 10px; font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase; }
+.fa-art { height: 110px; margin: 14px 0; border-radius: 16px; background: linear-gradient(135deg, #2d7a73, #1f5c5a); display: flex; align-items: center; justify-content: center; gap: 10px; overflow: hidden; }
+.fa-art span { width: 34px; height: 34px; border-radius: 10px; background: #ffd36b; animation: faBob 0.9s ease-in-out infinite alternate; }
+.fa-art span:nth-child(2) { background: #ff8a3d; animation-delay: 0.2s; }
+.fa-art span:nth-child(3) { background: #7ff0c9; animation-delay: 0.4s; }
+@keyframes faBob { to { transform: translateY(-16px) rotate(12deg); } }
+.fa-title { display: block; font-family: var(--display); font-size: 1.15rem; }
+.fa-txt { color: #b8c8cf; font-size: 0.85rem; margin: 6px 0 12px; }
+.fa-bar { height: 6px; background: rgba(255,255,255,0.15); border-radius: 3px; overflow: hidden; margin-bottom: 12px; }
+.fa-bar i { display: block; height: 100%; background: #ffcf6b; transform-origin: 0 50%; transform: scaleX(0); }
+.fa-close { min-height: 46px; min-width: 140px; border-radius: 14px; background: rgba(255,255,255,0.12); color: #fff; font-weight: 800; }
+#fakeAd.done .fa-close { background: var(--orange); }
 </style>
 
 <div id="app">
@@ -328,6 +396,7 @@ body.tuto #hint { display: none !important; }
     <div id="toasts" aria-live="polite"></div>
     <div id="regPill" hidden>🧾 À la caisse · en attente d’un client</div>
     <button id="btnGoals" hidden aria-label="Objectifs du jour et événement"></button>
+    <button id="btnChest" hidden aria-label="Coffres du jour"></button>
     <div id="verTag" aria-label="Version du jeu"></div>
     <div id="moveBar" hidden><span id="moveText">Touche l’étagère à déplacer</span><button id="moveCancel">Annuler</button></div>
   </main>
