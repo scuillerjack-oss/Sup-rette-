@@ -22,6 +22,7 @@ function start(hotData) {
     const st = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     if (typeof st.sound === 'boolean') settings.sound = st.sound;
     if (typeof st.haptics === 'boolean') settings.haptics = st.haptics;
+    if (typeof st.simAds === 'boolean') settings.simAds = st.simAds;
   } catch (e) { /* réglages par défaut */ }
 
   // V1.5 : partie normale (clé SAVE_KEY) ou partie d'essai du tutoriel (sa propre clé), voir src/tutorial.js.

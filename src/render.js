@@ -1,4 +1,5 @@
 // Rendu Canvas 2D haute définition : magasin vu de dessus en légère perspective.
+import { DECO_BY_ID } from './rewards.js';
 import { COLS, ROWS, DELIVERY_SPOTS, ZONES, SHELF_SLOTS, SHELF_CAPACITY, REGISTERS, PRODUCT_BY_ID, PRODUCTS, DOOR, STAFF, SHOP_TOP, AUTO_SPOTS, staffLook } from './data.js';
 
 const FONT = '"Baloo 2", "Nunito", system-ui, sans-serif';
@@ -197,7 +198,8 @@ export class Renderer {
   buildStatic() {
     const g = this.game;
     const s = g.state;
-    const key = `${this.w}x${this.h}|${s.zones.join()}|${s.registers.join()}|${s.shelves.map((x) => x.slot).join()}`;
+    const dp = (s.deco && s.deco.placed) || {};
+    const key = `${this.w}x${this.h}|${s.zones.join()}|${s.registers.join()}|${s.shelves.map((x) => x.slot).join()}|${dp.sol}|${dp.affiche}|${dp.plante}|${dp.enseigne}`;
     if (key === this.staticKey) return;
     this.staticKey = key;
     const cv = this.static;
@@ -216,7 +218,8 @@ export class Renderer {
     // Sol de la boutique : carrelage
     for (let r = SHOP_TOP; r < 14; r++) {
       for (let c = 0; c < COLS; c++) {
-        ctx.fillStyle = (r + c) % 2 ? '#f6f0e4' : '#e9e1d1';
+        const sol = DECO_BY_ID[dp.sol]; // V1.6 : sol choisi dans les décorations
+        ctx.fillStyle = sol ? sol.colors[(r + c) % 2 ? 0 : 1] : (r + c) % 2 ? '#f6f0e4' : '#e9e1d1';
         ctx.fillRect(X(c), Y(r), T + 0.5, T + 0.5);
       }
     }
@@ -261,8 +264,9 @@ export class Renderer {
 
     // Mur du fond
     const wall = ctx.createLinearGradient(0, Y(0) - T * 0.2, 0, Y(1));
-    wall.addColorStop(0, '#1f5c5a');
-    wall.addColorStop(1, '#2d7a73');
+    const ens = DECO_BY_ID[dp.enseigne];
+    wall.addColorStop(0, ens ? ens.colors[0] : '#1f5c5a');
+    wall.addColorStop(1, ens ? ens.colors[1] : '#2d7a73');
     ctx.fillStyle = wall;
     ctx.fillRect(X(0), Y(0) - T * 0.2, T * COLS, T * 1.2);
     ctx.fillStyle = 'rgba(255,255,255,0.08)';
@@ -272,6 +276,23 @@ export class Renderer {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillText('RÉSERVE', X(0) + T * 0.2, Y(0) + T * 0.4);
+    // V1.6 : affiche (mur du fond, à droite) et plante de l'entrée choisies dans les décorations
+    const aff = DECO_BY_ID[dp.affiche];
+    if (aff) {
+      const ax = X(COLS) - T * 0.9, ay = Y(0) - T * 0.1;
+      ctx.fillStyle = aff.colors[0]; rr(ctx, ax, ay, T * 0.7, T * 0.9, 3); ctx.fill();
+      ctx.fillStyle = aff.colors[1]; ctx.beginPath(); ctx.arc(ax + T * 0.35, ay + T * 0.38, T * 0.24, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = aff.colors[2]; ctx.font = `800 ${Math.round(T * 0.17)}px ${FONT}`; ctx.textAlign = 'center';
+      ctx.fillText(aff.text, ax + T * 0.35, ay + T * 0.4);
+      ctx.textAlign = 'left';
+    }
+    const pl = DECO_BY_ID[dp.plante];
+    {
+      const px0 = X(0) + T * 0.3, py0 = Y(13) + T * 0.55;
+      ctx.fillStyle = pl ? pl.colors[0] : '#c86b3c'; rr(ctx, px0 - T * 0.18, py0, T * 0.36, T * 0.3, 4); ctx.fill();
+      ctx.fillStyle = pl ? pl.colors[1] : '#4f9d5a';
+      for (const [dx, dy, rad] of [[0, -0.12, 0.2], [-0.13, -0.02, 0.14], [0.13, -0.02, 0.14]]) { ctx.beginPath(); ctx.arc(px0 + dx * T, py0 + dy * T, rad * T, 0, Math.PI * 2); ctx.fill(); }
+    }
 
     // Façade + porte
     ctx.fillStyle = '#1f5c5a';
@@ -710,10 +731,15 @@ export class Renderer {
     const dir = a.dir || 1;
     if (dir === -1) {
       ctx.beginPath(); ctx.arc(cx, hy - 0.5 * s, 8.8 * s, 0, Math.PI * 2); ctx.fill();
+      // V1.6 : vue de dos, cheveux longs ou chignon visibles aussi (caissière à sa caisse)
+      if (look.hairStyle === 1) { rr(ctx, cx - 7.5 * s, hy + 2 * s, 15 * s, 9 * s, 4 * s); ctx.fill(); }
+      if (look.hairStyle === 2) { ctx.beginPath(); ctx.arc(cx, hy - 9.5 * s, 3.8 * s, 0, Math.PI * 2); ctx.fill(); }
+      if (look.female) { ctx.fillStyle = '#ff6fa8'; ctx.beginPath(); ctx.arc(cx + 6 * s, hy - 6 * s, 2.2 * s, 0, Math.PI * 2); ctx.fill(); }
     } else {
       ctx.beginPath(); ctx.arc(cx, hy - 2 * s, 8.6 * s, Math.PI * 1.02, Math.PI * 1.98); ctx.fill();
       if (look.hairStyle === 1) { ctx.fillRect(cx - 8.6 * s, hy - 2 * s, 3 * s, 9 * s); ctx.fillRect(cx + 5.6 * s, hy - 2 * s, 3 * s, 9 * s); }
       if (look.hairStyle === 2) { ctx.beginPath(); ctx.arc(cx, hy - 10 * s, 3.5 * s, 0, Math.PI * 2); ctx.fill(); }
+      if (look.female) { ctx.fillStyle = '#ff6fa8'; ctx.beginPath(); ctx.arc(cx + 6 * s, hy - 6 * s, 2.2 * s, 0, Math.PI * 2); ctx.fill(); }
       // Yeux
       ctx.fillStyle = '#22262b';
       const ex = dir === 2 ? 2.5 * s : dir === -2 ? -2.5 * s : 0;

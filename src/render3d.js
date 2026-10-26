@@ -4,6 +4,7 @@
 // Les textes (prix, bulles, alertes, gains) sont dessinés sur un calque 2D par-dessus.
 import { COLS, ROWS, DELIVERY_SPOTS, ZONES, SHELF_SLOTS, SHELF_CAPACITY, REGISTERS, PRODUCT_BY_ID, PRODUCTS, DOOR, SPOT_STACK, SHOP_TOP, AUTO_SPOTS, staffLook } from './data.js';
 import { drawProduct, money } from './render.js';
+import { DECO_BY_ID } from './rewards.js';
 
 const FONT3 = '"Baloo 2", "Nunito", system-ui, sans-serif';
 const PITCH = (54 * Math.PI) / 180;
@@ -464,7 +465,8 @@ export class Renderer3D {
         b.add('paint', G('ico'), i % 2 ? '#4f9d5a' : '#3d8a4c', { x: x + Math.cos(a) * 0.08 * k, y: y0 + (0.38 + i * 0.06) * k, z: z + Math.sin(a) * 0.08 * k, sx: 0.26 * k, sy: 0.24 * k, sz: 0.26 * k });
       }
     };
-    plant(0.3, ROWS - 1.3);
+    // (V1.6 : la plante de l'entrée est dessinée avec les décorations, voir buildDeco)
+    void plant;
     for (let i = 0; i < 4; i++) {
       const y = i * 0.07;
       b.box('satin', '#e8483d', 0.34, 0.06, 0.24, COLS - 0.3, y, ROWS - 1.35);
@@ -474,18 +476,7 @@ export class Renderer3D {
     this.addBatch(b, s);
     // (V1.4 : bureau et ordinateur retirés, on commande avec le bouton « Commander » ; la place sert à la réserve)
 
-    // Enseigne, panneau RÉSERVE, affiche promo, horloge
-    s.add(this.plane(7.6, 1.5, this.canvasTex(1024, 202, (c, w, h) => {
-      c.fillStyle = '#fff7ea'; rr2(c, 4, 4, w - 8, h - 8, 40); c.fill();
-      const gr = c.createLinearGradient(0, 14, 0, h - 14);
-      gr.addColorStop(0, '#ff9d52'); gr.addColorStop(1, '#f2762a');
-      c.fillStyle = gr; rr2(c, 14, 14, w - 28, h - 28, 32); c.fill();
-      c.fillStyle = 'rgba(0,0,0,0.18)';
-      c.font = `800 104px ${FONT3}`; c.textAlign = 'center'; c.textBaseline = 'middle';
-      c.fillText('Ma P’tite Supérette', w / 2 + 4, h / 2 + 13);
-      c.fillStyle = '#ffffff';
-      c.fillText('Ma P’tite Supérette', w / 2, h / 2 + 8);
-    }), COLS / 2, 3.15, 0.76));
+    // Panneau RÉSERVE, affiche promo, horloge (V1.6 : l'enseigne est dans buildDeco, sa couleur se choisit)
     s.add(this.plane(2.2, 0.42, this.canvasTex(512, 98, (c, w, h) => {
       c.fillStyle = '#1f5c5a'; rr2(c, 0, 0, w, h, 20); c.fill();
       c.strokeStyle = '#f2c230'; c.lineWidth = 6; rr2(c, 6, 6, w - 12, h - 12, 16); c.stroke();
@@ -507,6 +498,81 @@ export class Renderer3D {
       c.beginPath(); c.moveTo(64, 64); c.lineTo(64, 28); c.stroke();
       c.beginPath(); c.moveTo(64, 64); c.lineTo(90, 72); c.stroke();
     }), 8.3, 1.55, 1.01, { toneMapped: true }));
+  }
+
+  // V1.6 : décorations (coffre déco), sans effet sur le jeu. Reconstruites seulement quand le choix change.
+  buildDeco() {
+    const placed = (this.game.state.deco && this.game.state.deco.placed) || {};
+    const key = `${placed.affiche}|${placed.plante}|${placed.enseigne}`;
+    if (key === this.decoKey) return;
+    this.decoKey = key;
+    const T = this.T3;
+    if (this.decoGroup) {
+      this.scene.remove(this.decoGroup);
+      this.decoGroup.traverse((m) => { if (m.isMesh) { if (m.geometry !== Batch.geo(T, 'box')) m.geometry.dispose(); if (m.material.map) { m.material.map.dispose(); m.material.dispose(); } } });
+    }
+    const grp = new T.Group();
+    this.decoGroup = grp;
+    this.scene.add(grp);
+    const G = (k) => Batch.geo(T, k);
+    // Enseigne
+    const ens = DECO_BY_ID[placed.enseigne];
+    const [e1, e2, e3] = ens ? ens.colors : ['#ff9d52', '#f2762a', '#ffffff'];
+    grp.add(this.plane(7.6, 1.5, this.canvasTex(1024, 202, (c, w, h) => {
+      c.fillStyle = '#fff7ea'; rr2(c, 4, 4, w - 8, h - 8, 40); c.fill();
+      const gr = c.createLinearGradient(0, 14, 0, h - 14);
+      gr.addColorStop(0, ens ? e2 : e1); gr.addColorStop(1, ens ? e1 : e2);
+      c.fillStyle = gr; rr2(c, 14, 14, w - 28, h - 28, 32); c.fill();
+      c.fillStyle = 'rgba(0,0,0,0.18)';
+      c.font = `800 104px ${FONT3}`; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText('Ma P’tite Supérette', w / 2 + 4, h / 2 + 13);
+      c.fillStyle = e3;
+      c.fillText('Ma P’tite Supérette', w / 2, h / 2 + 8);
+    }), COLS / 2, 3.15, 0.76));
+    // Affiche (mur du fond, à gauche du panneau RÉSERVE)
+    const aff = DECO_BY_ID[placed.affiche];
+    if (aff) {
+      grp.add(this.plane(0.62, 0.8, this.canvasTex(160, 206, (c, w, h) => {
+        c.fillStyle = aff.colors[0]; c.fillRect(0, 0, w, h);
+        c.fillStyle = aff.colors[1]; c.beginPath(); c.arc(w / 2, 84, 56, 0, Math.PI * 2); c.fill();
+        c.fillStyle = aff.colors[2]; c.font = `800 34px ${FONT3}`; c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText(aff.text, w / 2, 86);
+        c.fillStyle = aff.colors[1]; c.font = `800 22px ${FONT3}`;
+        c.fillText('Ma P’tite Supérette', w / 2, 176);
+      }), 0.9, 1.36, 1.01, { toneMapped: true }));
+    }
+    // Plante de l'entrée
+    const pl = DECO_BY_ID[placed.plante];
+    const b = new Batch(T);
+    const x = 0.3, z = ROWS - 1.3;
+    const pot = pl ? pl.colors[0] : '#c86b3c';
+    const leaf = pl ? pl.colors[1] : '#4f9d5a';
+    const shape = pl ? pl.shape : 'base';
+    if (shape === 'palmier') {
+      b.add('paint', G('cyl'), pot, { x, y: 0.14, z, sx: 0.34, sy: 0.28, sz: 0.34 });
+      b.add('paint', G('cyl'), '#9c6b3e', { x, y: 0.55, z, sx: 0.07, sy: 0.6, sz: 0.07 });
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        b.add('paint', G('sph'), i % 2 ? leaf : '#3d7a3a', { x: x + Math.cos(a) * 0.18, y: 0.86, z: z + Math.sin(a) * 0.18, sx: 0.36, sy: 0.06, sz: 0.12, ry: -a });
+      }
+    } else if (shape === 'cactus') {
+      b.add('paint', G('cyl'), pot, { x, y: 0.1, z, sx: 0.28, sy: 0.2, sz: 0.28 });
+      b.add('paint', G('cyl8'), leaf, { x, y: 0.38, z, sx: 0.14, sy: 0.36, sz: 0.14 });
+      b.add('paint', G('cyl8'), leaf, { x: x + 0.1, y: 0.42, z, sx: 0.07, sy: 0.14, sz: 0.07 });
+      b.add('paint', G('sphLow'), '#ff6fa8', { x, y: 0.58, z, sx: 0.07, sy: 0.05, sz: 0.07 });
+    } else {
+      b.add('paint', G('cyl'), pot, { x, y: 0.12, z, sx: 0.3, sy: 0.24, sz: 0.3 });
+      b.add('paint', G('cyl'), '#5b3b26', { x, y: 0.245, z, sx: 0.26, sy: 0.02, sz: 0.26 });
+      for (let i = 0; i < 4; i++) {
+        const a = i * 1.7 + x;
+        b.add('paint', G('ico'), i % 2 ? leaf : '#3d8a4c', { x: x + Math.cos(a) * 0.08, y: 0.38 + i * 0.06, z: z + Math.sin(a) * 0.08, sx: 0.26, sy: 0.24, sz: 0.26 });
+      }
+      if (shape === 'fleurs') for (let i = 0; i < 5; i++) {
+        const a = i * 1.26;
+        b.add('paint', G('sphLow'), leaf, { x: x + Math.cos(a) * 0.12, y: 0.56 + (i % 2) * 0.05, z: z + Math.sin(a) * 0.12, sx: 0.08, sy: 0.08, sz: 0.08 });
+      }
+    }
+    this.addBatch(b, grp);
   }
 
   // Halos au sol (rayon compatible avec le carton porté, mode « Déplacer ») : un seul appel de rendu.
@@ -535,8 +601,11 @@ export class Renderer3D {
   buildLayout() {
     const g = this.game;
     const st = g.state;
-    const key = `${st.zones.join()}|${st.registers.join()}|${st.shelves.map((x) => x.slot).join()}`;
+    const solDeco = DECO_BY_ID[st.deco && st.deco.placed && st.deco.placed.sol];
+    const key = `${st.zones.join()}|${st.registers.join()}|${st.shelves.map((x) => x.slot).join()}|${solDeco ? solDeco.id : ''}`;
     if (key === this.staticKey) return;
+    const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+    const tiles = solDeco ? [hexRgb(solDeco.colors[1]), hexRgb(solDeco.colors[0])] : [[233, 225, 209], [246, 240, 228]];
     this.staticKey = key;
     const T = this.T3;
     for (const o of [...this.world.children]) {
@@ -555,7 +624,7 @@ export class Renderer3D {
     const floorTex = this.canvasTex(COLS * px, rows * px, (c, w, h) => {
       for (let r = 0; r < rows; r++) for (let col = 0; col < COLS; col++) {
         const v = hash(r * 13 + col * 7) * 0.05;
-        const base = (r + col) % 2 ? [246, 240, 228] : [233, 225, 209];
+        const base = tiles[(r + col) % 2];
         c.fillStyle = `rgb(${base[0] - v * 255 | 0},${base[1] - v * 230 | 0},${base[2] - v * 200 | 0})`;
         c.fillRect(col * px, r * px, px, px);
         const gl = c.createLinearGradient(col * px, r * px, col * px + px, r * px + px);
@@ -884,6 +953,11 @@ export class Renderer3D {
     b.add('s', G('cap'), hair, { y: 0.875, sx: 0.38, sy: 0.36, sz: 0.37, rx: -0.38 });
     if (style === 1) b.box('s', hair, 0.34, 0.26, 0.12, 0, 0.66, -0.1);
     if (style === 2) b.add('s', G('sph'), hair, { y: 1.04, z: -0.09, sx: 0.13, sy: 0.13, sz: 0.13 });
+    // V1.6 : employée → barrette colorée et cils (l'apparence suit le prénom, voir staffLook)
+    if (look.female) {
+      b.add('s', G('sphLow'), '#ff6fa8', { x: 0.17, y: 1.0, z: 0.08, sx: 0.07, sy: 0.05, sz: 0.05 });
+      for (const x of [-0.065, 0.065]) b.box('s', '#22262b', 0.05, 0.012, 0.01, x + (x < 0 ? -0.012 : 0.012), 0.915, 0.165);
+    }
     // visage (vers +z)
     for (const x of [-0.065, 0.065]) {
       b.add('s', G('sphLow'), '#22262b', { x, y: 0.875, z: 0.158, sx: 0.045, sy: 0.055, sz: 0.03 });
@@ -1212,6 +1286,7 @@ export class Renderer3D {
     const g = this.game;
     const st = g.state;
     this.buildLayout();
+    this.buildDeco();
     this.updateStock();
     this.updateDelivery();
     this.updateHalos();
@@ -1226,7 +1301,7 @@ export class Renderer3D {
     // Personnages
     for (const o of this.agentObjs.values()) o.userData.seen = false;
     this.syncAgent('player', g.player, 'player');
-    for (const a of g.staffAgents()) this.syncAgent(`stocker-${a.id}`, a, 'stocker');
+    for (const a of g.staffAgents()) this.syncAgent(`stocker-${a.id}-${a.memberId ?? ''}`, a, 'stocker'); // V1.6 : nouvelle tête si l'intérimaire remplace
     for (const cu of g.customers) this.syncAgent(`c${cu.id}`, cu, 'customer');
     for (const [regId, member] of g.cashierAssignments()) {
       const reg = REGISTERS.find((x) => x.id === regId);

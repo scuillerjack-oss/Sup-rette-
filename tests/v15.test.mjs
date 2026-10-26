@@ -522,9 +522,9 @@ test('migration : une partie V1.4 se charge sans méfiance ni tutoriel, clé inc
   assert.ok(PRODUCT_BY_ID.eau.tag);
 });
 
-test('version : 1.5.0, versionCode au-dessus de la V1.4 publiée', () => {
+test('version : au moins 1.5.0, versionCode au-dessus de la V1.4 publiée', () => {
   const v = JSON.parse(read('package.json')).version;
-  assert.equal(v, '1.5.0');
+  assert.ok(versionCodeFor(v, 1) >= versionCodeFor('1.5.0', 1));
   assert.ok(versionCodeFor(v, 1) > versionCodeFor('1.4.0', 999));
   // le build embarque les deux nouveaux fichiers du tutoriel
   assert.match(read('build.mjs'), /'tutorial'[\s\S]*'tutoui'/);
