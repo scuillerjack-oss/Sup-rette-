@@ -101,8 +101,23 @@ Cotisations : 21,2 %. Objectifs exprimés en **revenu net par mois**.
    les objectifs du jour et les décorations servent aussi à ça.
 4. Plafond de la micro-entreprise : 83 600 € de chiffre d'affaires par an, largement au-dessus de ces scénarios.
 
-## 6. À faire plus tard (pas maintenant)
-- Coder les coffres, l'intérimaire du jour, les décorations et le bilan doublé (version à planifier avec Jack).
+## 6. Mesuré dans le jeu (V1.6, pubs simulées)
+Coffres, intérimaire, bilan doublé, décorations et pub imposée sont codés en V1.6 avec des **pubs simulées**
+(`src/ads.js`, aucune vraie pub). Mesure au robot (`scripts/bot.mjs`, 45 journées, 16 parties, coffres tirés avec graine) :
+
+| Joueur | Niveau 10 atteint | Pièces en caisse au jour 30 |
+|---|---|---|
+| N'ouvre aucun coffre | jour 30,3 (repère V1.1 : 31) | ~360 |
+| Ouvre **tous** les coffres et double **chaque** bilan en bénéfice | jour 28,9 (≈ 5 % plus rapide ; 27,5 à 29 selon les séries) | ~690 |
+
+- Chances des coffres d'employés vérifiées sur 200 000 tirages (35/28/20/12/5 %) ; avec la garantie, un 4★+ tombe
+  ≈ 25 % du temps au lieu de 17 %. Jamais plus de 5 coffres d'affilée sans 4★+.
+- Le bilan doublé est le plus gros gain (≈ +89 pièces par journée doublée pour ce robot) ; il ne touche que les
+  journées en bénéfice. Agrandissements et licences coûtent pareil : progression un peu plus rapide, pas de jeu cassé.
+- Aucun chiffre du modèle (sections 2 à 4) ne change. Si la bêta trouve le bilan doublé trop généreux, piste :
+  le plafonner (par exemple « jusqu'à +X pièces selon le niveau »).
+
+## 7. À faire plus tard (pas maintenant)
 - Brancher AdMob (mode test d'abord), la fenêtre de consentement RGPD, et Google Play Billing pour les 2 achats.
 - Mesurer la vraie rétention et le vrai revenu pendant les 14 jours de test fermé, puis **remplacer les chiffres
   de ce document par les vrais**.

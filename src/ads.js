@@ -9,21 +9,21 @@
 // showInterstitial()  → Promise<{ watched: true }>
 export const AD_SECONDS = 3;
 
-const LABELS = {
+const AD_LABELS = {
   cashier: 'Coffre caissier',
   stocker: 'Coffre magasinier',
   deco: 'Coffre déco',
   double: 'Bilan doublé'
 };
 
-let busy = null;
+let adShowing = null;
 
 // Affiche le faux écran de pub. Sans DOM (tests Node) : résolu tout de suite.
 function fakeAd({ title, rewarded, seconds = AD_SECONDS }) {
-  if (busy) return busy;
+  if (adShowing) return adShowing;
   const doc = typeof document !== 'undefined' ? document : null;
   if (!doc || !doc.body) return Promise.resolve({ watched: true });
-  busy = new Promise((resolve) => {
+  adShowing = new Promise((resolve) => {
     const box = doc.createElement('div');
     box.id = 'fakeAd';
     box.setAttribute('role', 'dialog');
@@ -58,15 +58,15 @@ function fakeAd({ title, rewarded, seconds = AD_SECONDS }) {
       cancelAnimationFrame(raf);
       box.classList.add('out');
       setTimeout(() => box.remove(), 180);
-      busy = null;
+      adShowing = null;
       resolve({ watched: done });
     });
   });
-  return busy;
+  return adShowing;
 }
 
 export function showRewarded(kind) {
-  return fakeAd({ title: `${LABELS[kind] || 'Récompense'} · regarde jusqu’au bout`, rewarded: true });
+  return fakeAd({ title: `${AD_LABELS[kind] || 'Récompense'} · regarde jusqu’au bout`, rewarded: true });
 }
 
 export function showInterstitial() {

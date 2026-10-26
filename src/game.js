@@ -44,7 +44,7 @@ export function newState() {
     rewards: emptyRewards(),
     deco: emptyDeco(),
     roster: [], // carnet : tous les employés connus { id, kind, name, level, look, from: 'embauche' | 'coffre' }
-    temp: null, // intérimaire du jour : { day, kind, member, replaces: id | null, onDuty }
+    temps: { cashier: null, stocker: null }, // intérimaires du jour (un par poste) : { day, kind, member, replaces, onDuty }
     nextStaffId: 1000000 // numéros d'employés uniques et sauvegardés
   };
 }
@@ -150,9 +150,14 @@ export function deserialize(json) {
     for (const c of merged.staff.cashiers) addKnown('cashier', c);
     addKnown('stocker', merged.staff.stocker);
     merged.roster = roster;
-    const t = s.temp;
-    merged.temp = t && STAFF[t.kind] && ok(t.member) && Number.isFinite(t.day) ? t : null;
-    const maxId = Math.max(0, ...roster.map((m) => Number(m.id) || 0), ...(merged.temp ? [Number(merged.temp.member.id) || 0] : []));
+    const temps = { cashier: null, stocker: null };
+    for (const kind of Object.keys(temps)) {
+      const t = s.temps && s.temps[kind];
+      temps[kind] = t && t.kind === kind && ok(t.member) && Number.isFinite(t.day) ? t : null;
+    }
+    merged.temps = temps;
+    delete merged.temp;
+    const maxId = Math.max(0, ...roster.map((m) => Number(m.id) || 0), ...Object.values(temps).filter(Boolean).map((t) => Number(t.member.id) || 0));
     merged.nextStaffId = Math.max(1000000, Number(s.nextStaffId) || 0, maxId + 1);
     if (merged.goals && (!Array.isArray(merged.goals.list) || merged.goals.list.some((g) => !GOAL_KINDS[g.kind]))) merged.goals = null;
     for (const p of PRODUCTS) {
@@ -233,10 +238,13 @@ export class Game {
     this.drops = 0;
     this.moves = 0; // étagères déplacées (tutoriel)
     // V1.6 : un intérimaire d'une journée passée (appli fermée avant le bilan) rejoint le carnet et s'en va.
-    const t = this.state.temp;
-    if (t && t.day !== this.state.day) {
-      this.addToRoster(t.kind, t.member, 'coffre');
-      this.state.temp = null;
+    if (!this.state.temps || typeof this.state.temps !== 'object') this.state.temps = { cashier: null, stocker: null };
+    for (const kind of ['cashier', 'stocker']) {
+      const t = this.state.temps[kind];
+      if (t && t.day !== this.state.day) {
+        this.addToRoster(kind, t.member, 'coffre');
+        this.state.temps[kind] = null;
+      }
     }
     if (!this.state.cashierRegs || typeof this.state.cashierRegs !== 'object') this.state.cashierRegs = {};
     this.syncStaff();
@@ -669,7 +677,7 @@ export class Game {
     if (kind === 'cashier') s.staff.cashiers = [...s.staff.cashiers.filter((c) => c.days > 0), member];
     else s.staff.stocker = member;
     // un poste vient d'être pris : l'intérimaire se replace (poste libre, sinon le moins bon, sinon au repos)
-    if (this.tempActive() && this.state.temp.kind === kind) this.placeTemp();
+    if (this.tempActive(kind)) this.placeTemp(kind);
     this.syncStaff();
   }
   // Embaucher quelqu'un du carnet, au prix normal (mêmes salaires que les candidats).
@@ -677,7 +685,7 @@ export class Game {
     const s = this.state;
     const def = STAFF[kind];
     if (!def) return { ok: false };
-    if (this.tempActive() && s.temp.member.id === id) return { ok: false, reason: 'Intérimaire aujourd’hui : embauche possible dès demain' };
+    if (this.tempActive(kind) && s.temps[kind].member.id === id) return { ok: false, reason: 'Intérimaire aujourd’hui : embauche possible dès demain' };
     const m = (s.roster || []).find((x) => x.kind === kind && x.id === id);
     if (!m) return { ok: false, reason: 'Inconnu' };
     if (s.level < def.level) return { ok: false, reason: `Niveau ${def.level} requis` };
@@ -691,14 +699,17 @@ export class Game {
     this.emit('sfx', { name: 'buy' });
     return { ok: true, member };
   }
-  tempActive() {
-    const t = this.state.temp;
+  tempOf(kind) {
+    return (this.state.temps && this.state.temps[kind]) || null;
+  }
+  tempActive(kind) {
+    const t = this.tempOf(kind);
     return !!(t && t.day === this.state.day && this.state.phase !== 'summary');
   }
   // Où met-on l'intérimaire ? Poste libre → il le prend. Sinon il remplace le moins bon employé de ce poste
   // s'il est MEILLEUR que lui. Sinon il reste au repos (le joueur peut le faire travailler dans « Mon équipe »).
-  placeTemp() {
-    const t = this.state.temp;
+  placeTemp(kind) {
+    const t = this.tempOf(kind);
     if (!t) return;
     const team = this.contracted(t.kind);
     if (team.length < this.postsFor(t.kind)) { t.onDuty = true; t.replaces = null; return; }
@@ -709,10 +720,9 @@ export class Game {
   }
   // Choix du joueur dans « Mon équipe », sans aucun coût : replaces = id d'un employé, 'free' = poste libre,
   // null = intérimaire au repos (l'employé habituel reprend).
-  setTempDuty(replaces) {
-    const s = this.state;
-    if (!this.tempActive()) return { ok: false, reason: 'Pas d’intérimaire aujourd’hui' };
-    const t = s.temp;
+  setTempDuty(kind, replaces) {
+    if (!this.tempActive(kind)) return { ok: false, reason: 'Pas d’intérimaire aujourd’hui' };
+    const t = this.tempOf(kind);
     const team = this.contracted(t.kind);
     if (replaces == null) { t.onDuty = false; t.replaces = null; }
     else if (replaces === 'free') {
@@ -729,8 +739,8 @@ export class Game {
   // Qui travaille vraiment aujourd'hui (contrats + intérimaire), dans l'ordre des caisses.
   dutyCashiers() {
     const list = this.contracted('cashier');
-    const t = this.state.temp;
-    if (!this.tempActive() || t.kind !== 'cashier' || !t.onDuty) return list;
+    const t = this.tempOf('cashier');
+    if (!this.tempActive('cashier') || !t.onDuty) return list;
     const i = list.findIndex((c) => c.id === t.replaces);
     const temp = { ...t.member, temp: true, days: 1 };
     if (i >= 0) return list.map((c, k) => (k === i ? temp : c));
@@ -738,8 +748,8 @@ export class Game {
   }
   dutyStocker() {
     const st = this.contracted('stocker')[0] || null;
-    const t = this.state.temp;
-    if (this.tempActive() && t.kind === 'stocker' && t.onDuty && (!st || t.replaces === st.id)) return { ...t.member, temp: true, days: 1 };
+    const t = this.tempOf('stocker');
+    if (this.tempActive('stocker') && t.onDuty && (!st || t.replaces === st.id)) return { ...t.member, temp: true, days: 1 };
     return st;
   }
   // Caisse choisie pour un caissier (« Mon équipe ») : les deux caissiers échangent leur place.
@@ -783,11 +793,12 @@ export class Game {
     let name = FIRST_NAMES[Math.floor(rng() * FIRST_NAMES.length)];
     for (let k = 0; k < 12 && used.has(name); k++) name = FIRST_NAMES[Math.floor(rng() * FIRST_NAMES.length)];
     const member = { id: this.newStaffId(), name, level: roll.stars, look: Math.floor(rng() * 6) };
-    s.temp = { day: s.day, kind, member, replaces: null, onDuty: false };
-    this.placeTemp();
-    const replaced = s.temp.replaces != null ? this.contracted(kind).find((c) => c.id === s.temp.replaces) : null;
+    const t = { day: s.day, kind, member, replaces: null, onDuty: false };
+    s.temps[kind] = t;
+    this.placeTemp(kind);
+    const replaced = t.replaces != null ? this.contracted(kind).find((c) => c.id === t.replaces) : null;
     this.syncStaff();
-    return { ok: true, kind, member, stars: roll.stars, guaranteed: roll.guaranteed, onDuty: s.temp.onDuty, replaced: replaced ? replaced.name : null };
+    return { ok: true, kind, member, stars: roll.stars, guaranteed: roll.guaranteed, onDuty: t.onDuty, replaced: replaced ? replaced.name : null };
   }
   openDecoChest(rng) {
     const s = this.state;
@@ -1251,11 +1262,15 @@ export class Game {
     }
     summary.staffErrors = s.stats.staffErrors || 0;
     // V1.6 : l'intérimaire part (il a fini de servir les derniers clients) et rejoint le carnet.
-    if (s.temp) {
-      summary.tempLeft = s.temp.member.name;
-      this.addToRoster(s.temp.kind, s.temp.member, 'coffre');
-      s.temp = null;
+    const left = [];
+    for (const kind of ['cashier', 'stocker']) {
+      const t = this.tempOf(kind);
+      if (!t) continue;
+      left.push(t.member.name);
+      this.addToRoster(kind, t.member, 'coffre');
+      s.temps[kind] = null;
     }
+    if (left.length) summary.tempLeft = left.join(' et ');
     s.totals.revenue += s.stats.revenue;
     s.totals.days++;
     s.lastSummary = summary;

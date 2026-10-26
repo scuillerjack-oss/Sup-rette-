@@ -349,7 +349,68 @@ pas seulement l'anneau.
 - Vérifié en Chrome mobile simulé, pas sur un vrai Xiaomi : le retour de Jack confirmera la lisibilité des bulles
   et des couleurs.
 
-## Prochaine version (V1.6)
+### V1.6 — coffres (pubs simulées), intérimaire du jour, « Mon équipe », bilan doublé, décorations (26/10/2026)
+Décisions de Jack du 26/10 au matin, d'après `docs/MODELE-ECONOMIQUE.md` (sections 0 et 2).
+**Aucune vraie pub ni aucun vrai paiement** : pas d'AdMob, pas de Google Play Billing, aucun SDK, aucune requête
+réseau ajoutée. Toutes les pubs passent par un seul module, `src/ads.js` (`showRewarded(kind)`, `showInterstitial()`),
+qui affiche un écran « Pub simulée (bêta) » de 3 secondes avec un bouton Fermer. Les achats sont seulement décrits
+dans `src/shop.js` (`BETA_FREE = true` : le ×3 reste gratuit, aucun écran d'achat).
+
+**A. Coffres et pubs récompensées** (bouton 🎁 « Coffres » en haut à gauche du magasin, avec une pastille)
+- 4 récompenses, **chacune 1 fois par journée de jeu**, **à partir du jour 3**, **jamais dans le tutoriel**.
+  Le joueur choisit : s'il ferme le panneau, **aucune pub, jamais**. Une pub fermée avant la fin ne donne rien.
+- **Coffre caissier** et **coffre magasinier** : un employé de 1 à 5★. Chances **affichées dans le coffre** :
+  1★ 35 % · 2★ 28 % · 3★ 20 % · 4★ 12 % · 5★ 5 %. **Garantie** : après 5 coffres d'employé sans 4★+, le suivant donne
+  4★ ou 5★ (compteur sauvegardé, rappelé sous les coffres). Avec la garantie, un 4★+ tombe en réalité ~25 % du temps.
+- **L'intérimaire** est gratuit jusqu'à 20 h. Poste libre → il le prend. Sinon, s'il est meilleur que le moins bon
+  employé du poste, il le **remplace immédiatement** (même à 16 h ; le magasinier garde son carton en main), sans
+  aucun coût en plus ni en moins. L'employé habituel garde son contrat (ses jours restants comptent normalement) et
+  revient le lendemain. Pas meilleur : il reste au repos (on peut le faire travailler à la main dans « Mon équipe »).
+  À la fin de la journée, il part et rejoint le **carnet**. Coffre caissier et coffre magasinier le même jour :
+  deux intérimaires, un par poste.
+- **Ouverture du coffre** animée (coffre qui tremble, couvercle qui saute, rayons, étoiles qui apparaissent une à
+  une) : CSS seulement (transformations et opacité), fluide sur téléphone.
+- **Bilan doublé** : bouton au bilan, ×2 sur le **bénéfice**. Journée en perte (ou nulle) : bouton désactivé avec
+  l'explication « Journée en perte : il n'y a pas de bénéfice à doubler ».
+- **Coffre déco** : 11 décorations sans aucun effet sur le jeu — 3 affiches, 3 sols, 3 plantes/pots, 2 enseignes.
+  Posée tout de suite si l'emplacement est vide, à changer dans **Aménager → Décorations** (ou « D'origine »).
+  Dessinées en 3D et en 2D, sauvegardées.
+
+**B. Pub imposée simulée** : une toutes les 3 journées de jeu, **uniquement au bilan** (en touchant « Préparer le jour
+suivant »), jamais avant le jour 3, jamais dans le tutoriel, jamais deux pubs (tous types) à moins de 4 minutes
+réelles. Une pub récompensée regardée repousse la suivante de 3 journées. Elle ne se ferme qu'au bout des 3 s.
+Menu ☰ → **« Simuler les pubs (bêta) »**, activé par défaut : coupé, plus aucune fausse pub et les coffres
+s'ouvrent directement (pour tester vite).
+
+**C. Personnel → onglet « Mon équipe »** (à côté de « Candidats ») : tous les employés connus (embauchés ou gagnés
+en coffre) avec étoiles, poste, caisse, salaire hebdo et état (au travail, au repos aujourd'hui, libre, intérimaire
+« jusqu'à 20 h »). On y choisit qui travaille (intérimaire au poste libre, à la place de X, ou au repos), on change
+un caissier de caisse, en pleine journée et sans surcoût, et on **embauche quelqu'un du carnet au prix normal**
+(salaires `CASHIER_LEVELS` / `STOCKER_LEVELS` inchangés). Carnet limité à 20 personnes par poste (les moins bons
+partent en premier, jamais quelqu'un sous contrat).
+
+**D. Hommes / femmes** : prénoms toujours 10/10. Nouveau : l'apparence suit le prénom. Femmes : cheveux longs ou
+chignon et barrette rose (3D et 2D, aussi vue de dos à la caisse) ; hommes : cheveux courts. Avant, une Léa pouvait
+avoir les cheveux courts d'un homme. Tirage mesuré : 50 % ± 4 (candidats et coffres).
+
+**E. Économie** (robot, 45 journées, 16 parties) : sans coffres, niveau 10 au **jour 30,3** (inchangé, repère : 31) ;
+joueur qui ouvre **tous** les coffres et double **chaque** bilan en bénéfice : niveau 10 au **jour 28,9** (≈ 5 % plus
+rapide, 27,5 à 29 selon les séries), environ 2 fois plus de pièces en caisse au jour 30. Progression accélérée
+raisonnable, jeu pas cassé (agrandissements et licences au même prix). Détail dans `docs/MODELE-ECONOMIQUE.md`, section 6.
+
+**Sauvegarde** : clé `superette-save-v1` inchangée, toujours via `createSaver`. Nouveaux champs : `rewards`
+(jours utilisés, garantie, rythme des pubs), `deco`, `roster` (carnet), `temps` (intérimaires du jour, un par poste),
+`cashierRegs` (caisse choisie), `nextStaffId`.
+Une partie V1.5 se charge sans rien perdre : l'équipe actuelle entre dans le carnet. Données abîmées ignorées.
+Appli fermée en pleine journée avec un intérimaire, rouverte un autre jour : il est parti, il est dans le carnet.
+
+**Vérifications** : 119 tests Node, dont 23 nouveaux (`tests/v16.test.mjs`) : chances sur 200 000 tirages avec
+graine, garantie sur 100 000 coffres (jamais 6 sans 4★+), compteur sauvegardé, une fois par journée, jour 3, refus =
+aucune pub, pas de pub ni coffre en tutoriel, cadence de la pub imposée et report, 4 minutes, remplacement immédiat
+sans coût (16 h), poste libre / moins bon / au repos, carnet et embauche au prix normal, changement de caisse,
+bilan doublé seulement si bénéfice, décorations, migration V1.5, apparence et 50/50, simulation « tous les coffres ».
+
+## Prochaine version (V1.7)
 1. **Concurrents dans le quartier** : 1 puis 2 magasins rivaux qui apparaissent avec la progression ; ils prennent des
    clients quand ta popularité est plus basse que la leur (facteur dans `dayMultiplier()`), font parfois des promos,
    et apparaissent dans le bilan (« Le Discount d'en face t'a pris 6 clients »).
@@ -358,5 +419,5 @@ pas seulement l'anneau.
 4. Proposé : réglage « graphismes économes » manuel dans le menu, pour les téléphones très modestes.
 
 ## Pistes suivantes
-Gains hors ligne, frigos et produits frais, prix du marché qui bougent, décoration, musique
+Gains hors ligne, frigos et produits frais, prix du marché qui bougent, plus de décorations, musique
 choisie à l’oreille par Jack, fiche Google Play.

@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync, cpSync } from 'node:fs';
 // Usage : node build.mjs [commit]   (par défaut $GITHUB_SHA, sinon « local »)
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
-const order = ['data', 'layout', 'game', 'storage', 'update', 'tutorial', 'render', 'render3d', 'audio', 'tap', 'ui', 'tutoui', 'main'];
+const order = ['data', 'rewards', 'layout', 'game', 'storage', 'update', 'tutorial', 'render', 'render3d', 'audio', 'tap', 'ads', 'shop', 'ui', 'tutoui', 'main'];
 let code = '';
 for (const name of order) {
   let src = readFileSync(new URL(`./src/${name}.js`, import.meta.url), 'utf8');

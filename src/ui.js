@@ -1,5 +1,6 @@
 // Interface DOM : HUD, barre du bas, panneaux, mini-jeu de caisse, fin de journée.
 import { shouldCloseOnBackdrop } from './tap.js';
+import { genderOf } from './data.js';
 import { PRODUCTS, PRODUCT_BY_ID, STAFF, ZONES, REGISTERS, SHELF_CAPACITY, RESERVE_CAPACITY, CHANGE_MONEY, DAY_START, DAY_END, xpForLevel, dailyCharges, CASHIER_LEVELS, STOCKER_LEVELS, EVENT_BY_ID, GOALS_FROM_DAY } from './data.js';
 import { cents } from './game.js';
 import { drawProduct, money } from './render.js';
@@ -419,15 +420,15 @@ export class UI {
     const g = this.g;
     const s = g.state;
     const stars = (n) => `<span class="stars" aria-label="Niveau ${n} sur 5">${'★'.repeat(n)}<i>${'★'.repeat(5 - n)}</i></span>`;
-    const temp = g.tempActive() ? s.temp : null;
     const cashMap = g.cashierAssignments();
     const regOf = (id) => { for (const [r, c] of cashMap) if (c.id === id) return r; return null; };
     const stockerNow = g.dutyStocker();
     const cards = [];
     for (const kind of ['cashier', 'stocker']) {
       const d = STAFF[kind];
+      const temp = g.tempActive(kind) ? g.tempOf(kind) : null;
       const people = [];
-      if (temp && temp.kind === kind) people.push({ m: temp.member, temp: true });
+      if (temp) people.push({ m: temp.member, temp: true });
       for (const m of (s.roster || []).filter((x) => x.kind === kind)) if (!(temp && temp.member.id === m.id)) people.push({ m });
       cards.push(`<h3 class="sec">${d.label}s</h3>`);
       if (s.level < d.level) { cards.push(`<p class="empty">Poste débloqué au niveau ${d.level}.</p>`); continue; }
@@ -442,13 +443,13 @@ export class UI {
           status = `<span class="pill temp">Intérimaire jusqu’à 20 h · gratuit</span>`;
           const team = g.contracted(kind);
           const opts = [];
-          if (team.length < g.postsFor(kind) && !(temp.onDuty && temp.replaces == null)) opts.push(`<button class="ghost sm" data-a="tempDuty" data-id="free">Prendre le poste libre</button>`);
-          for (const c of team) if (!(temp.onDuty && temp.replaces === c.id)) opts.push(`<button class="ghost sm" data-a="tempDuty" data-id="${c.id}">À la place de ${esc(c.name)}</button>`);
-          if (temp.onDuty) opts.push(`<button class="ghost sm" data-a="tempDuty" data-id="rest">Au repos</button>`);
+          if (team.length < g.postsFor(kind) && !(temp.onDuty && temp.replaces == null)) opts.push(`<button class="ghost sm" data-a="tempDuty" data-kind="${kind}" data-id="free">Prendre le poste libre</button>`);
+          for (const c of team) if (!(temp.onDuty && temp.replaces === c.id)) opts.push(`<button class="ghost sm" data-a="tempDuty" data-kind="${kind}" data-id="${c.id}">À la place de ${esc(c.name)}</button>`);
+          if (temp.onDuty) opts.push(`<button class="ghost sm" data-a="tempDuty" data-kind="${kind}" data-id="rest">Au repos</button>`);
           btns = opts.join('');
         } else if (contract) {
           status = working ? `<span class="pill good">Au travail · encore ${contract.days} jour${contract.days > 1 ? 's' : ''}</span>` : `<span class="pill ok">Au repos aujourd’hui · revient demain (contrat : ${contract.days} j)</span>`;
-          if (!working && temp && temp.kind === kind && temp.replaces === m.id) btns += `<button class="ghost sm" data-a="tempDuty" data-id="rest">Le remettre au poste</button>`;
+          if (!working && temp && temp.replaces === m.id) btns += `<button class="ghost sm" data-a="tempDuty" data-kind="${kind}" data-id="rest">Le remettre au poste</button>`;
           btns += `<button class="buy sm" data-a="extend" data-kind="${kind}" data-id="${m.id}" ${s.coins < g.staffCost(kind, m.level) ? 'disabled' : ''}>+7 jours · ${coinSvg}${money(g.staffCost(kind, m.level))}</button>`;
         } else {
           status = `<span class="pill">Libre · ${m.from === 'coffre' ? 'gagné dans un coffre' : 'ancien employé'}</span>`;
@@ -699,7 +700,7 @@ export class UI {
       case 'extend': res = g.extend(b.dataset.kind, Number(id)); if (res.ok) this.toast('Contrat prolongé de 7 jours'); break;
       case 'staffTab': this.staffTab = id; sfx('tick'); break;
       case 'hireKnown': res = g.hireKnown(b.dataset.kind, Number(id)); if (res.ok) this.toast(`${res.member.name} rejoint l’équipe pour 7 jours`); break;
-      case 'tempDuty': res = g.setTempDuty(id === 'rest' ? null : id === 'free' ? 'free' : Number(id)); if (res.ok) sfx('tick'); break;
+      case 'tempDuty': res = g.setTempDuty(b.dataset.kind, id === 'rest' ? null : id === 'free' ? 'free' : Number(id)); if (res.ok) sfx('tick'); break;
       case 'toReg': res = g.setCashierRegister(Number(id), Number(b.dataset.reg)); if (res.ok) sfx('tick'); break;
       case 'deco': res = g.placeDeco(b.dataset.slot, id || null); if (res.ok) sfx('tick'); break;
       case 'chest':
@@ -878,7 +879,7 @@ export class UI {
         ${popRows(d.rep)}
         ${d.goals && d.goals.length ? `<div class="sumgoals"><b>🎯 Objectifs : ${d.goals.filter((x) => x.done).length}/${d.goals.length}${d.goalCoins ? ` · +${money(d.goalCoins)} pièces` : ''}</b>${d.goals.map((x) => `<span class="${x.done ? 'ok' : 'ko'}">${x.done ? '✔' : '✘'} ${esc(x.label)}</span>`).join('')}</div>` : ''}
         ${d.staffEnding.length ? `<p class="note">Fin de contrat : ${d.staffEnding.map(esc).join(', ')}. Pense à renouveler dans Personnel.</p>` : ''}
-        ${d.tempLeft ? `<p class="note ok">${esc(d.tempLeft)} (intérimaire) est parti à 20 h. Retrouve-le dans Personnel → Mon équipe.</p>` : ''}
+        ${d.tempLeft ? `<p class="note ok">Intérimaire${d.tempLeft.includes(' et ') ? 's' : ''} parti${d.tempLeft.includes(' et ') ? 's' : ''} à 20 h : ${esc(d.tempLeft)}. Retrouve-le dans Personnel → Mon équipe.</p>` : ''}
         <button class="primary" data-a="next">Préparer le jour ${d.day + 1}</button>`;
     } else if (m.kind === 'chest') {
       card.innerHTML = this.chestRevealHtml(m.data);
@@ -904,14 +905,16 @@ export class UI {
       body = `<div class="cr-prize deco"><i style="background:linear-gradient(135deg,${d.colors[0]},${d.colors[1]})"></i></div>
         <h2>${esc(d.name)}</h2><p class="reset-txt">${r.placed ? 'Déjà posée dans ton magasin ! ' : ''}Change-la quand tu veux dans <b>Aménager → Décorations</b>. Aucun effet sur le jeu.</p>`;
     } else {
-      const label = STAFF[r.kind].label;
-      const where = r.replaced ? `Il remplace <b>${esc(r.replaced)}</b> tout de suite, sans frais. ${esc(r.replaced)} garde son contrat et revient demain.`
-        : r.onDuty ? 'Il prend le poste libre tout de suite.'
+      const f = genderOf(r.member.name) === 'f';
+      const il = f ? 'Elle' : 'Il';
+      const label = r.kind === 'cashier' ? (f ? 'Caissière' : 'Caissier') : (f ? 'Magasinière' : 'Magasinier');
+      const where = r.replaced ? `${il} remplace <b>${esc(r.replaced)}</b> tout de suite, sans frais. ${esc(r.replaced)} garde son contrat et revient demain.`
+        : r.onDuty ? `${il} prend le poste libre tout de suite.`
         : 'Ton employé actuel est au moins aussi bon : l’intérimaire reste au repos. Tu peux le faire travailler dans Personnel → Mon équipe.';
       body = `<div class="cr-prize staff ${r.stars >= 4 ? 'rare' : ''}">${r.kind === 'cashier' ? '🧑‍💼' : '👷'}</div>
         <h2>${esc(r.member.name)}</h2>${stars(r.stars)}
         <p class="cr-kind">${label} intérimaire · gratuit jusqu’à 20 h${r.guaranteed ? ' · <b>garantie 4★+</b>' : ''}</p>
-        <p class="reset-txt">${where} Ensuite, il rejoint ton carnet : embauche possible au prix normal.</p>`;
+        <p class="reset-txt">${where} Ensuite, ${il.toLowerCase()} rejoint ton carnet : embauche possible au prix normal.</p>`;
     }
     return `<div class="chest-stage" aria-hidden="true"><div class="rays"></div><div class="chest"><div class="lid"></div><div class="base"><span></span></div></div></div>
       <div class="cr-body">${body}<button class="primary" data-a="ok">Super !</button></div>`;

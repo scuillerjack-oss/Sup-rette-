@@ -14,6 +14,7 @@ import { BETA_FREE, PRODUCTS_IAP, speed3Unlocked, hasManagerPack } from '../src/
 import { tutorialState } from '../src/tutorial.js';
 import { createSaver } from '../src/storage.js';
 import { playBot } from '../scripts/bot.mjs';
+import { versionCodeFor } from '../scripts/android-version.js';
 
 const read = (f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
 const run = (g, secs, dt = 0.05) => { for (let t = 0; t < secs; t += dt) g.update(dt); };
@@ -227,7 +228,7 @@ test('intérimaire magasinier meilleur : remplace IMMÉDIATEMENT (même à 16 h)
   assert.equal(s.lastSummary.tempLeft, r.member.name);
   g.nextDay();
   assert.equal(g.stocker.name, 'Hugo', 'Hugo revient le lendemain');
-  assert.equal(s.temp, null);
+  assert.equal(s.temps.stocker, null);
   assert.ok(s.roster.some((m) => m.id === r.member.id && m.from === 'coffre'), 'intérimaire dans le carnet');
 });
 
@@ -253,9 +254,9 @@ test('intérimaire caissier : prend le poste libre, ou remplace le moins bon s�
   r = g.claimReward('cashier', { rng: rngFor(2), now: 0 });
   assert.equal(r.onDuty, false);
   assert.equal(g.cashierAt(1).name, 'Léa');
-  assert.equal(g.setTempDuty(1).ok, true);
+  assert.equal(g.setTempDuty('cashier', 1).ok, true);
   assert.equal(g.cashierAt(1).id, r.member.id);
-  assert.equal(g.setTempDuty(null).ok, true);
+  assert.equal(g.setTempDuty('cashier', null).ok, true);
   assert.equal(g.cashierAt(1).name, 'Léa');
   assert.equal(g.state.coins, cents(5000) - 0, 'aucun coût');
 });
@@ -276,7 +277,7 @@ test('intérimaire : appli fermée avant le bilan → à la réouverture un autr
   const saved = deserialize(serialize(g.state));
   saved.day += 1; saved.phase = 'prep';
   const g2 = new Game(saved);
-  assert.equal(g2.state.temp, null);
+  assert.equal(g2.state.temps.stocker, null);
   assert.ok(g2.state.roster.some((m) => m.id === r.member.id));
   assert.equal(g2.stocker, null);
 });
@@ -382,7 +383,7 @@ test('coffre déco : au moins 3 affiches, 3 sols, 3 plantes, 2 enseignes ; posé
 test('sauvegarde : une partie V1.5 se charge sans rien perdre (clé inchangée, équipe dans le carnet)', () => {
   assert.equal(SAVE_KEY, 'superette-save-v1');
   const old = newState();
-  for (const k of ['rewards', 'deco', 'roster', 'temp', 'nextStaffId']) delete old[k];
+  for (const k of ['rewards', 'deco', 'roster', 'temps', 'nextStaffId']) delete old[k];
   old.day = 14; old.level = 7; old.coins = 77777;
   old.staff = { cashiers: [{ id: 3014, name: 'Inès', level: 3, days: 4, look: 2 }], stocker: { id: 3015, name: 'Karim', level: 2, days: 1, look: 5 } };
   const json = JSON.stringify(old);
@@ -393,7 +394,7 @@ test('sauvegarde : une partie V1.5 se charge sans rien perdre (clé inchangée, 
   assert.deepEqual(s.roster.map((m) => m.name).sort(), ['Inès', 'Karim']);
   assert.equal(s.rewards.pity, 0);
   assert.deepEqual(s.deco.owned, []);
-  assert.equal(s.temp, null);
+  assert.deepEqual(s.temps, { cashier: null, stocker: null });
   assert.ok(s.nextStaffId > 3015);
   const g = new Game(s);
   assert.equal(g.cashierAt(1).name, 'Inès');
@@ -404,9 +405,9 @@ test('sauvegarde : une partie V1.5 se charge sans rien perdre (clé inchangée, 
   createSaver(st, SAVE_KEY, () => g.state, { fresh: newState, serializeFn: serialize }).save();
   assert.equal(deserialize(mem.get(SAVE_KEY)).roster.length, 2);
   // données abîmées : ignorées
-  const bad = deserialize(JSON.stringify({ ...old, rewards: 'x', deco: { owned: ['zzz'], placed: { sol: 'zzz' } }, roster: [{ kind: 'pirate' }], temp: { kind: 'x' } }));
+  const bad = deserialize(JSON.stringify({ ...old, rewards: 'x', deco: { owned: ['zzz'], placed: { sol: 'zzz' } }, roster: [{ kind: 'pirate' }], temps: { cashier: { kind: 'x' } } }));
   assert.deepEqual(bad.deco.owned, []);
-  assert.equal(bad.temp, null);
+  assert.equal(bad.temps.cashier, null);
   assert.equal(bad.roster.length, 2);
 });
 
@@ -454,4 +455,27 @@ test('économie : joueur qui ouvre TOUS les coffres → progression un peu plus 
     assert.ok(r.chestLog.opened > 0 && r.chestLog.doubled > 0);
     assert.ok(r.dayStats.every((d) => Number.isFinite(d.coins)));
   }
+});
+
+test('relecture : coffre caissier ET coffre magasinier le même jour → deux intérimaires, aucun perdu', () => {
+  const g = shop();
+  g.state.staff.stocker = { id: 50, name: 'Hugo', level: 1, days: 4, look: 2 };
+  g.syncStaff();
+  const a = g.claimReward('stocker', { rng: rngFor(5), now: 0 });
+  const b = g.claimReward('cashier', { rng: rngFor(2), now: 0 });
+  assert.ok(a.ok && b.ok);
+  assert.equal(g.stocker.name, a.member.name, 'le magasinier intérimaire reste au poste');
+  assert.equal(g.cashierAt(1).name, b.member.name, 'la caisse libre est prise');
+  run(g, 400);
+  assert.equal(g.state.phase, 'summary');
+  assert.match(g.state.lastSummary.tempLeft, / et /);
+  const ids = g.state.roster.map((m) => m.id);
+  assert.ok(ids.includes(a.member.id) && ids.includes(b.member.id), 'les deux dans le carnet');
+});
+
+test('version : 1.6.0, versionCode au-dessus de la V1.5 ; le build embarque rewards, ads et shop', () => {
+  const v = JSON.parse(read('package.json')).version;
+  assert.equal(v, '1.6.0');
+  assert.ok(versionCodeFor(v, 1) > versionCodeFor('1.5.0', 999));
+  assert.match(read('build.mjs'), /'data', 'rewards'[\s\S]*'ads', 'shop', 'ui'/);
 });
