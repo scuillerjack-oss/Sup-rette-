@@ -44,3 +44,12 @@ la bêta en V1.0). Toute sauvegarde de la partie passe par `createSaver` (`src/s
 - Android : `android/` n'est PAS committé, la CI le régénère (`npx cap add android` + `scripts/android-prepare.mjs`).
   Les icônes Android sont dans `android-res/`. npm (Capacitor seulement) n'est utile qu'en CI.
 - npm dans les sessions Claude : passer par le proxy (`npm install --https-proxy=$HTTPS_PROXY --proxy=$HTTPS_PROXY --noproxy=localhost --cafile=/root/.ccr/ca-bundle.crt`).
+
+## Règles du studio (valables pour tous les projets de Jack)
+- **Relance automatique après la limite de quota** : si une équipe est bloquée par la limite, le chef de projet
+  programme une relance juste après l’heure de réinitialisation et reprend le travail en cours sans attendre Jack
+  (quota hebdomadaire épuisé : rien à relancer avant sa réinitialisation).
+- **Aucun jeu à perte** : chaque jeu a une fiche de rentabilité dans `docs/` (coûts réels, 3 scénarios de revenus,
+  seuil de rentabilité), mise à jour avant chaque publication ; 0 € de coût de fonctionnement.
+- **Jamais de pub quand le joueur dit non** ; jamais de pub pendant qu’on joue ni dans un tutoriel.
+- Les documents de travail vivent dans `docs/` du dépôt concerné, pour être retrouvés d’une conversation à l’autre.
