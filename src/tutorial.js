@@ -64,7 +64,9 @@ export function sessionPlan(storage) {
   const st = ttLoad(storage, SAVE_KEY);
   // Proposé une seule fois, au tout premier lancement (pas de partie). Un joueur qui a déjà une partie le
   // trouve dans le menu ☰ (petit message la première fois).
-  return { mode: 'normal', key: SAVE_KEY, state: st, fresh: newState, offer: !flag.seen && !st, announce: !flag.seen && !!st };
+  // (relecture : une partie neuve jamais jouée, écrite pendant que la proposition était affichée, ne compte pas)
+  const played = !!st && (st.day > 1 || st.totals.served > 0 || st.phase !== 'prep' || st.pending.length > 0);
+  return { mode: 'normal', key: SAVE_KEY, state: st, fresh: newState, offer: !flag.seen && !played, announce: !flag.seen && played };
 }
 
 // Lancer le tutoriel. saver = celui de la partie EN COURS (normale) : sa dernière sauvegarde est faite, puis il est
@@ -90,7 +92,16 @@ export function leaveTutorial(storage, saver, { finished = false } = {}) {
   if (finished) {
     try { storage.removeItem(TUTO_SAVE_KEY); } catch (e) { /* ignoré */ }
   }
+  backToNormal(storage);
+}
+
+// Retour à la partie normale, vérifié : si le drapeau ne peut pas être écrit (stockage plein), on l'efface
+// (sans drapeau, c'est la partie normale qui se charge). Jamais coincé dans le tutoriel.
+export function backToNormal(storage) {
   writeFlag(storage, { seen: true, mode: 'normal' });
+  if (readFlag(storage).mode !== 'normal') {
+    try { storage.removeItem(TUTO_FLAG_KEY); } catch (e) { /* ignoré */ }
+  }
 }
 
 export function skipTutorial(storage) {
@@ -112,6 +123,19 @@ const ttStockOf = (g, id) => g.state.pending.some((d) => d.product === id) || g.
 const ttStackTiles = (g, pred = () => true) => g.state.delivery.map((st, i) => (st.length && pred(st[st.length - 1]) ? { r: DELIVERY_SPOTS[i].r, c: DELIVERY_SPOTS[i].c } : null)).filter(Boolean);
 const ttFilled = (g, id) => g.state.shelves.some((x) => x.product === id && x.qty > 0);
 const ttReg1 = REGISTERS[0];
+// Journée finie avant d'avoir servi à la caisse (joueur resté ailleurs) : on passe au bilan, rien ne bloque.
+const ttDayOver = (g) => g.state.phase === 'summary' || g.state.day > 1;
+function ttTopUp(g) {
+  for (const id of ['eau', 'pates']) if (!ttStockOf(g, id)) g.state.pending.push({ product: id, eta: 1.5 });
+}
+// Plancher de pièces pour les étapes qui achètent (relecture) : le joueur a pu tout dépenser avant.
+function ttCoinsAtLeast(g, c) {
+  if (g.state.coins < c) {
+    g.state.coins = c;
+    return true;
+  }
+  return false;
+}
 const ttSheetIs = (ui, kind) => ui.sheet && ui.sheet.kind === kind;
 
 // Une étape : { id, day, title, text(g), target(g, ui) → { dom: [sélecteurs], tiles: [{ r, c }] },
@@ -143,7 +167,8 @@ export const STEPS = [
     title: 'Le code couleur des cartons',
     text: () => `La livraison arrive dans la <b>réserve</b>, en haut (${RESERVE_CAPACITY} cartons au plus). Chaque produit a sa <b>couleur</b> : ${ttTag('eau')} = Eau, ${ttTag('pates')} = Pâtes. Le panneau de l'étagère a la même couleur, avec le nom écrit dessus.`,
     button: 'Compris',
-    ready: (g) => !g.state.pending.length && g.deliveryCount() > 0,
+    // (relecture : si le joueur a déjà rangé les cartons en rayon, le bouton doit rester utilisable)
+    ready: (g) => !g.state.pending.length && (g.deliveryCount() > 0 || !!g.player.carry || ttFilled(g, 'eau') || ttFilled(g, 'pates')),
     waiting: 'Livraison en route…',
     target: (g) => ({ tiles: ttStackTiles(g) })
   },
@@ -152,7 +177,8 @@ export const STEPS = [
     title: 'Ranger la réserve',
     text: () => `Tu ranges la réserve comme tu veux. Touche un carton pour le <b>prendre</b>, puis touche une <b>case libre</b> de la réserve pour le <b>reposer</b>. ${SPOT_STACK} cartons par pile au plus, et il faut toujours laisser un passage.`,
     enter: (g, mem) => { mem.drops = g.drops; },
-    done: (g, mem) => g.drops > (mem.drops ?? g.drops),
+    // Relecture : validée aussi si plus rien n'est à reposer (cartons déjà rangés en rayon avant cette étape).
+    done: (g, mem) => g.drops > (mem.drops ?? g.drops) || (!g.deliveryCount() && !g.player.carry && !g.state.pending.length),
     target: (g) => {
       if (!g.player.carry) return { tiles: ttStackTiles(g) };
       const order = [...AUTO_SPOTS, ...DELIVERY_SPOTS.keys()];
@@ -165,6 +191,9 @@ export const STEPS = [
     title: 'Mettre en rayon',
     text: () => `Prends un carton et touche l'étagère <b>de sa couleur</b> : ${ttTag('eau')} va dans le rayon « Eau », ${ttTag('pates')} dans le rayon « Pâtes ». Lis le nom sur le panneau. Range les <b>deux</b> cartons. Un rayon contient ${SHELF_CAPACITY} articles.`,
     done: (g) => ttFilled(g, 'eau') && ttFilled(g, 'pates'),
+    // Scénario : s'il manque le carton d'un des deux produits (vendu, jamais commandé…), le fournisseur le livre.
+    enter: (g) => ttTopUp(g),
+    tick: (g) => ttTopUp(g),
     target: (g) => {
       const carry = g.player.carry;
       if (carry) {
@@ -205,29 +234,29 @@ export const STEPS = [
       if (!g.scriptLists.length && g.state.stats.served === 0) g.scriptLists = [[{ product: 'eau', want: 1 }, { product: 'pates', want: 1 }], [{ product: 'eau', want: 2 }], [{ product: 'chips', want: 1 }, { product: 'pates', want: 1 }]];
       if (g.state.stats.served === 0 && g.nextPayment == null) g.nextPayment = 'cash';
     },
-    done: (g) => !!g.checkout || (g.player.atRegister != null && !g.player.path.length),
+    done: (g) => !!g.checkout || (g.player.atRegister != null && !g.player.path.length) || ttDayOver(g),
     target: () => ({ tiles: [ttReg1.staff, ...ttReg1.counter] })
   },
   {
     id: 'scan',
     title: 'Scanner les articles',
     text: () => 'Quand le client est devant toi, touche <b>chaque article</b> sur le tapis pour le scanner.',
-    done: (g) => g.state.stats.served > 0 || (g.checkout && g.checkout.step !== 'scan'),
+    done: (g) => g.state.stats.served > 0 || (g.checkout && g.checkout.step !== 'scan') || ttDayOver(g),
     target: (g) => ({ dom: g.checkout ? ['#checkout .belt .item:not(.done)'] : [], tiles: g.checkout ? [] : [ttReg1.staff] })
   },
   {
     id: 'cash',
     title: 'Rendre la monnaie',
     text: () => `Le client paie en espèces. Rends <b>la monnaie exacte</b> avec les pièces et billets, puis <b>Valider</b>. Rendre trop : le client est content (un peu de popularité) mais tu perds ces pièces. Pas assez : il le remarque souvent et la popularité baisse.`,
-    done: (g) => g.state.stats.served >= 1,
+    done: (g) => g.state.stats.served + g.state.stats.angry >= 1 || ttDayOver(g),
     target: (g) => ({ dom: g.checkout && g.checkout.step === 'cash' ? ['#checkout .cash-top', '#checkout [data-a="cash"]'] : g.checkout ? ['#checkout .co-actions .primary, #checkout [data-a="exact"]'] : [] })
   },
   {
     id: 'card',
     title: 'Paiement par carte',
     text: () => 'Client suivant : il paie par <b>carte</b>. Tape le montant <b>avec la virgule</b> (par exemple 2,00) puis <b>OK</b>. Attention : un tout petit écart en ta faveur peut passer inaperçu ; plus gros, le client le voit et la popularité baisse ; énorme (plus de la moitié du ticket, ou plus de 10 pièces), il <b>refuse de payer</b> et part furieux.',
-    enter: (g, mem) => { g.nextPayment = 'card'; mem.served = g.state.stats.served; },
-    done: (g, mem) => g.state.stats.served + g.state.stats.angry > (mem.served ?? 1),
+    enter: (g, mem) => { g.nextPayment = 'card'; mem.served = g.state.stats.served + g.state.stats.angry; },
+    done: (g, mem) => g.state.stats.served + g.state.stats.angry > (mem.served ?? 1) || ttDayOver(g),
     target: (g) => ({ dom: g.checkout && g.checkout.step === 'card' ? ['#checkout .terminal', '#checkout .keypad'] : g.checkout && g.checkout.step === 'scan' ? ['#checkout .belt .item:not(.done)'] : [], tiles: g.checkout || g.player.atRegister != null ? [] : [ttReg1.staff] })
   },
   {
@@ -249,6 +278,7 @@ export const STEPS = [
     title: 'Embaucher',
     text: () => `Touche <b>👥 Personnel</b> et embauche quelqu'un. <b>Caissier</b> (niveau ${STAFF.cashier.level}) : tient une caisse. <b>Magasinier</b> (niveau ${STAFF.stocker.level}) : range les cartons dans le rayon de leur produit. Plus d'<b>étoiles</b> : plus rapide, moins d'erreurs, plus cher. Contrat de <b>${CONTRACT_DAYS} journées</b> payé d'avance, à prolonger dans Personnel.`,
     done: (g) => g.state.staff.cashiers.length > 0 || !!g.state.staff.stocker,
+    enter: (g, mem) => { mem.gift = ttCoinsAtLeast(g, g.staffCost('stocker', 1) + cents(10)); },
     target: (g, ui) => {
       if (!ttSheetIs(ui, 'staff')) return { dom: ui.sheet ? ['[data-a="close"]'] : ['#btnStaff'] };
       return { dom: ['[data-a="hire"]:not([disabled])'] };
@@ -258,7 +288,7 @@ export const STEPS = [
     id: 'build',
     title: 'Aménager : acheter une étagère',
     text: (g) => `Touche <b>🛠️ Aménager</b> puis « Placer » pour acheter une étagère (${ttCoins(g.nextShelfCost())} pièces). Chaque étagère de plus coûte un peu plus cher et ajoute un peu de charges chaque jour.`,
-    enter: (g, mem) => { mem.shelves = g.state.shelves.length; },
+    enter: (g, mem) => { mem.shelves = g.state.shelves.length; mem.gift = ttCoinsAtLeast(g, g.nextShelfCost() + cents(10)); },
     done: (g, mem) => g.state.shelves.length > (mem.shelves ?? 3),
     target: (g, ui) => {
       if (ttSheetIs(ui, 'build')) return { dom: ['[data-a="shelf"]'] };
@@ -335,6 +365,10 @@ export class Tutorial {
         this.entered = this.index;
         this.mem = {};
         if (st.enter) st.enter(this.g, this.mem);
+      }
+      if (st.tick) {
+        this.tickClock = (this.tickClock || 0) + 1;
+        if (this.tickClock % 30 === 0) st.tick(this.g, this.mem);
       }
       if (st.button || !st.done || !st.done(this.g, this.mem)) break;
       this.next();

@@ -1558,10 +1558,14 @@ export class Game {
   // rayon (ou dans la réserve s'il n'y a plus de place), et il part fâché.
   refuseSale(cu) {
     const s = this.state;
+    const left = {};
     for (const it of cu.basket) {
       const shelf = s.shelves.find((x) => x.product === it.product && x.qty < SHELF_CAPACITY);
       if (shelf) shelf.qty++;
+      else left[it.product] = (left[it.product] || 0) + 1;
     }
+    // Rayon plein entre-temps : les articles repartent dans la réserve en carton entamé (rien ne disparaît).
+    for (const [product, qty] of Object.entries(left)) this.returnCarton({ product, qty });
     cu.basket = [];
     cu.processing = false;
     s.stats.angry++;

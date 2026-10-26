@@ -487,7 +487,7 @@ test('caisse : la méfiance du quartier fait perdre des clients, puis s’efface
   assert.equal(g.trustFactor(), 1);
 });
 
-test('caisse : simulation — le tricheur finit plus pauvre que le joueur honnête (6 parties de 8 jours)', () => {
+test('caisse : simulation — le tricheur finit plus pauvre que le joueur honnête (10 parties de 8 jours)', () => {
   const realRandom = Math.random;
   try {
     const final = (overcharge, sd) => {
@@ -495,9 +495,10 @@ test('caisse : simulation — le tricheur finit plus pauvre que le joueur honnê
       Math.random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
       return playBot({ days: 8, overcharge, noInvest: true }).game.state.coins;
     };
-    for (let sd = 1; sd <= 6; sd++) {
+    for (let sd = 1; sd <= 10; sd++) {
       const honest = final(0, sd);
-      for (const oc of [100, 500, 1000]) {
+      // de +0,10 (petit écart souvent inaperçu) à +10 pièces par client
+      for (const oc of [10, 20, 100, 500, 1000]) {
         const cheat = final(oc, sd);
         assert.ok(honest > cheat, `partie ${sd}, ${oc / 100} pièces de trop à chaque client : honnête ${honest} > tricheur ${cheat}`);
       }
@@ -524,4 +525,82 @@ test('version : 1.5.0, versionCode au-dessus de la V1.4 publiée', () => {
   assert.ok(versionCodeFor(v, 1) > versionCodeFor('1.4.0', 999));
   // le build embarque les deux nouveaux fichiers du tutoriel
   assert.match(read('build.mjs'), /'tutorial'[\s\S]*'tutoui'/);
+});
+
+// ------------------------------------------------------------------ corrections de la relecture
+test('relecture : cartons rangés en rayon avant l’étape « réserve » → le tutoriel ne bloque pas', () => {
+  const g = new Game(tutorialState());
+  const t = new Tutorial(g);
+  t.update(); t.confirm();
+  g.order({ eau: 1, pates: 1 }); run(g, 15); t.update();
+  assert.equal(t.step.id, 'colors');
+  // le joueur range tout de suite les deux cartons, sans passer par l'étape « réserve »
+  for (let k = 0; k < 2; k++) {
+    const i = g.state.delivery.findIndex((x) => x.length);
+    g.tap(Math.floor(i / 9) + 1, i % 9); run(g, 4);
+    const sh = g.state.shelves.find((x) => x.product === g.player.carry.product);
+    const sl = SHELF_SLOTS.find((x) => x.id === sh.slot);
+    g.tap(sl.r, sl.c); run(g, 6);
+  }
+  assert.equal(t.ready(), true, '« Compris » reste utilisable');
+  t.confirm(); t.update();
+  assert.equal(t.step.id, 'price', 'réserve et rayons validés d’un coup');
+});
+
+test('relecture : carton manquant à l’étape « rayon » → le fournisseur le livre', () => {
+  const g = new Game(tutorialState());
+  g.state.tuto.step = STEP_BY_ID.shelf;
+  const t = new Tutorial(g);
+  t.update();
+  assert.equal(g.state.pending.length, 2, 'Eau et Pâtes livrées');
+  run(g, 3);
+  assert.equal(g.deliveryCount(), 2);
+});
+
+test('relecture : tout dépensé avant « Embaucher » ou « Acheter une étagère » → de quoi payer', () => {
+  for (const id of ['hire', 'build']) {
+    const g = new Game(tutorialState());
+    g.state.coins = 0;
+    g.state.level = 3;
+    g.state.tuto.step = STEP_BY_ID[id];
+    new Tutorial(g).update();
+    if (id === 'hire') assert.ok(g.hire('stocker', g.ensureCandidates().stocker[0].id).ok);
+    else assert.ok(g.buyShelf(g.firstFreeSlot()).ok);
+  }
+});
+
+test('relecture : journée finie sans être passé à la caisse → on arrive au bilan, pas de blocage', () => {
+  const g = new Game(tutorialState());
+  g.state.tuto.step = STEP_BY_ID.register;
+  const t = new Tutorial(g);
+  t.update();
+  g.state.phase = 'summary';
+  t.update();
+  assert.equal(t.step.id, 'summary');
+});
+
+test('relecture : drapeau impossible à écrire → retour quand même à la partie normale', () => {
+  const st = memStorage();
+  normalGame(st);
+  startTutorial(st, null);
+  const full = { ...st, setItem: () => { throw new Error('plein'); } };
+  leaveTutorial(full, null);
+  assert.equal(sessionPlan(st).mode, 'normal');
+});
+
+test('relecture : partie neuve écrite pendant la proposition → le tutoriel est reproposé', () => {
+  const st = memStorage();
+  st.setItem(SAVE_KEY, serialize(newState())); // page cachée pendant la fenêtre « Bienvenue »
+  assert.equal(sessionPlan(st).offer, true);
+});
+
+test('relecture : client qui refuse, rayon plein entre-temps → les articles reviennent en réserve', () => {
+  const g = new Game();
+  g.state.shelves[0] = { slot: 'A3', product: 'eau', qty: 18 };
+  g.rebuild();
+  const cu = { ...g.makeAgent(10, 2, { kind: 'customer' }), basket: [{ product: 'eau', price: 100 }, { product: 'eau', price: 100 }], mood: 1, list: [], idx: 0, register: null };
+  g.customers.push(cu);
+  g.refuseSale(cu);
+  const back = g.state.delivery.flat().filter((c) => c.product === 'eau').reduce((a, c) => a + c.qty, 0) + g.state.pending.filter((d) => d.product === 'eau').reduce((a, d) => a + (d.qty || 0), 0);
+  assert.equal(back, 2);
 });

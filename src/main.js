@@ -8,7 +8,7 @@ import { resolveTap, isTap, TAP_RADIUS_MOVE } from './tap.js';
 import { settings, unlockAudio } from './audio.js';
 import { createSaver } from './storage.js';
 import { BUILD_VERSION, UPDATE_TRIED_KEY, fetchLatestVersion, updateAction } from './update.js';
-import { sessionPlan, startTutorial, leaveTutorial, skipTutorial, savedTutoStep } from './tutorial.js';
+import { sessionPlan, startTutorial, leaveTutorial, skipTutorial, savedTutoStep, backToNormal } from './tutorial.js';
 import { TutoUI } from './tutoui.js';
 
 // Stockage du navigateur, ou un stockage vide si le téléphone le refuse (la partie continue sans sauvegarde).
@@ -81,9 +81,18 @@ function start(hotData) {
   });
   let tuto = null;
   if (plan.mode === 'tuto') {
-    tuto = new TutoUI(game, renderer, ui, { save, leaveTutorial: (o) => ui.hooks.leaveTutorial(o) });
-    ui.tuto = tuto;
-    document.body.classList.add('tuto');
+    try {
+      tuto = new TutoUI(game, renderer, ui, { save, leaveTutorial: (o) => ui.hooks.leaveTutorial(o) });
+      ui.tuto = tuto;
+      document.body.classList.add('tuto');
+    } catch (e) {
+      // Relecture : un tutoriel qui ne démarre pas ne doit jamais bloquer le jeu → retour à la partie normale.
+      console.warn('tutoriel', e);
+      saver.lock();
+      backToNormal(store);
+      location.reload();
+      return;
+    }
   } else if (plan.offer) ui.offerTutorial();
   else if (plan.announce) {
     skipTutorial(store);
