@@ -5,6 +5,7 @@
 import { COLS, ROWS, DELIVERY_SPOTS, ZONES, SHELF_SLOTS, SHELF_CAPACITY, REGISTERS, PRODUCT_BY_ID, PRODUCTS, DOOR, SPOT_STACK, SHOP_TOP, AUTO_SPOTS, staffLook } from './data.js';
 import { drawProduct, money } from './render.js';
 import { DECO_BY_ID } from './rewards.js';
+import { settings } from './audio.js';
 
 const FONT3 = '"Baloo 2", "Nunito", system-ui, sans-serif';
 const PITCH = (54 * Math.PI) / 180;
@@ -40,6 +41,36 @@ function luminance(hex) {
 function hash(n) {
   const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
   return x - Math.floor(x);
+}
+
+// ---------------------------------------------------------------- qualité d'image (V1.7)
+// Paliers, du plus beau au plus économe. On allège d'abord les ombres, puis la résolution ; la résolution ne
+// descend jamais sous 2 (ou celle de l'écran) en Auto/Haute : sur un Xiaomi (écran ×2,75) l'image reste nette.
+// (l'anticrénelage WebGL se choisit à la création du contexte : on ne peut pas le couper en route ; à ×2 il ne
+// coûte presque rien, et c'est la résolution qui fait la netteté.)
+export const QUALITY_STEPS = [
+  { shadowMap: 2048, softShadows: true, maxDpr: 3 },
+  { shadowMap: 1024, softShadows: false, maxDpr: 3 },
+  { shadowMap: 1024, softShadows: false, maxDpr: 2.5 },
+  { shadowMap: 1024, softShadows: false, maxDpr: 2 },
+  // dernier palier = « Économe » (réglage manuel seulement) : petite résolution, ombres simples
+  { shadowMap: 512, softShadows: false, maxDpr: 1.25, eco: true }
+];
+export const QUALITY = { warmup: 4, window: 3, slowFps: 30, fastFps: 50, need: 2 };
+// Résolution de rendu : jamais plus que l'écran ; en Auto/Haute, au moins min(2, écran).
+export function renderPixelRatio(deviceDpr, mode = 'auto', level = 0) {
+  const dev = Math.max(1, deviceDpr || 1);
+  if (mode === 'eco') return Math.min(dev, QUALITY_STEPS[QUALITY_STEPS.length - 1].maxDpr);
+  const st = QUALITY_STEPS[mode === 'high' ? 0 : Math.min(level, QUALITY_STEPS.length - 2)];
+  return Math.min(dev, Math.max(Math.min(2, dev), st.maxDpr));
+}
+// Un pas de la qualité automatique : fps mesuré sur une fenêtre ; p = compteurs { slow, fast } gardés entre mesures.
+export function qualityStep(level, fps, p) {
+  const last = QUALITY_STEPS.length - 2; // l'Auto ne descend jamais au palier « Économe »
+  if (fps < QUALITY.slowFps) { p.slow++; p.fast = 0; } else if (fps > QUALITY.fastFps) { p.fast++; p.slow = 0; } else { p.slow = 0; p.fast = 0; }
+  if (p.slow >= QUALITY.need && level < last) { p.slow = 0; return level + 1; }
+  if (p.fast >= QUALITY.need && level > 0) { p.fast = 0; return level - 1; }
+  return level;
 }
 
 export function webglAvailable() {
@@ -242,7 +273,7 @@ export class Renderer3D {
     sun.position.set(COLS / 2 - 6, 15, ROWS / 2 + 5);
     sun.target.position.set(COLS / 2, 0, ROWS / 2);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(1536, 1536);
+    sun.shadow.mapSize.set(2048, 2048);
     const sc = sun.shadow.camera;
     sc.left = -10; sc.right = 10; sc.top = 11; sc.bottom = -11; sc.near = 1; sc.far = 40;
     sun.shadow.bias = -0.0006;
@@ -294,14 +325,19 @@ export class Renderer3D {
     return m;
   }
 
-  canvasTex(w, h, draw) {
+  // k (V1.7) : la texture est dessinée k fois plus grande (même dessin, contexte agrandi) : enseigne, panneaux et
+  // sol restent nets sur un écran ×2,75 au lieu d'être des petites images étirées. En « Économe » : k = 1.
+  canvasTex(w, h, draw, k = 1) {
+    const kk = settings.quality === 'eco' ? 1 : k;
     const cv = document.createElement('canvas');
-    cv.width = w;
-    cv.height = h;
-    draw(cv.getContext('2d'), w, h);
+    cv.width = Math.round(w * kk);
+    cv.height = Math.round(h * kk);
+    const c = cv.getContext('2d');
+    c.scale(kk, kk);
+    draw(c, w, h);
     const t = new this.T3.CanvasTexture(cv);
     t.colorSpace = this.T3.SRGBColorSpace;
-    t.anisotropy = 4;
+    t.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy ? this.renderer.capabilities.getMaxAnisotropy() : 4);
     return t;
   }
 
@@ -396,7 +432,7 @@ export class Renderer3D {
         c.fillStyle = '#f2c230'; c.fillRect(x, h - 8, 12, 8);
         c.fillStyle = '#2c2c2c'; c.fillRect(x + 12, h - 8, 12, 8);
       }
-    });
+    }, 2);
     const reserve = new T.Mesh(new T.PlaneGeometry(COLS, RH), new T.MeshStandardMaterial({ map: conc, roughness: 0.95 }));
     reserve.rotation.x = -Math.PI / 2;
     reserve.position.set(COLS / 2, 0, 1 + RH / 2);
@@ -482,7 +518,7 @@ export class Renderer3D {
       c.strokeStyle = '#f2c230'; c.lineWidth = 6; rr2(c, 6, 6, w - 12, h - 12, 16); c.stroke();
       c.fillStyle = '#ffffff'; c.font = `800 60px ${FONT3}`; c.textAlign = 'center'; c.textBaseline = 'middle';
       c.fillText('RÉSERVE', w / 2, h / 2 + 4);
-    }), 2.9, 1.6, 1.01));
+    }, 1.5), 2.9, 1.6, 1.01));
     s.add(this.plane(0.62, 0.8, this.canvasTex(160, 206, (c, w, h) => {
       c.fillStyle = '#ffd23f'; c.fillRect(0, 0, w, h);
       c.fillStyle = '#e8483d'; c.beginPath(); c.arc(w / 2, 82, 62, 0, Math.PI * 2); c.fill();
@@ -528,7 +564,7 @@ export class Renderer3D {
       c.fillText('Ma P’tite Supérette', w / 2 + 4, h / 2 + 13);
       c.fillStyle = e3;
       c.fillText('Ma P’tite Supérette', w / 2, h / 2 + 8);
-    }), COLS / 2, 3.15, 0.76));
+    }, 1.5), COLS / 2, 3.15, 0.76));
     // Affiche (mur du fond, à gauche du panneau RÉSERVE)
     const aff = DECO_BY_ID[placed.affiche];
     if (aff) {
@@ -697,7 +733,7 @@ export class Renderer3D {
         c.fillStyle = 'rgba(255,138,61,0.22)';
         for (const t of [reg.pay, ...reg.queue.slice(0, 2)]) { rr2(c, t.c * px + 26, (t.r - SHOP_TOP) * px + 26, px - 52, px - 52, 10); c.fill(); }
       }
-    });
+    }, 1.5);
     const floor = new T.Mesh(new T.PlaneGeometry(COLS, rows), new T.MeshStandardMaterial({ map: floorTex, roughness: 0.38, metalness: 0.02 }));
     floor.rotation.x = -Math.PI / 2;
     floor.position.set(COLS / 2, 0, SHOP_TOP + rows / 2);
@@ -877,7 +913,7 @@ export class Renderer3D {
           c.fillStyle = edge; c.fillRect(0, (h - bh) / 2, w, 4); c.fillRect(0, (h + bh) / 2 - 4, w, 4);
           const r = bh * 0.36;
           c.fillStyle = '#ffffff'; c.beginPath(); c.arc(w / 2, h / 2, r + 4, 0, Math.PI * 2); c.fill();
-          c.drawImage(this.iconCanvas(p, 128), w / 2 - r, h / 2 - r, r * 2, r * 2);
+          c.drawImage(this.iconCanvas(p, 256), w / 2 - r, h / 2 - r, r * 2, r * 2);
         } else {
           // étiquette de couleur au centre de la face avant
           const lw = w * 0.56, lh = h * 0.66;
@@ -886,9 +922,9 @@ export class Renderer3D {
           c.lineWidth = 5; c.strokeStyle = edge; c.stroke();
           const r = lh * 0.3;
           c.fillStyle = '#ffffff'; c.beginPath(); c.arc(w / 2, h / 2, r + 4, 0, Math.PI * 2); c.fill();
-          c.drawImage(this.iconCanvas(p, 128), w / 2 - r, h / 2 - r, r * 2, r * 2);
+          c.drawImage(this.iconCanvas(p, 256), w / 2 - r, h / 2 - r, r * 2, r * 2);
         }
-      });
+      }, 1.5);
       tex.anisotropy = 8;
       m = new this.T3.MeshStandardMaterial({ map: tex, roughness: 0.85 });
       this.mats.set(k, m);
@@ -1120,7 +1156,7 @@ export class Renderer3D {
     const box = this.canvas.parentElement.getBoundingClientRect();
     this.w = box.width;
     this.h = box.height;
-    this.dpr = Math.min(this.lowQuality ? 1.25 : 2, window.devicePixelRatio || 1);
+    this.dpr = renderPixelRatio(window.devicePixelRatio || 1, settings.quality, this.qLevel || 0);
     this.renderer.setPixelRatio(this.dpr);
     this.renderer.setSize(this.w, this.h, false);
     this.canvas.style.width = `${this.w}px`;
@@ -1217,25 +1253,52 @@ export class Renderer3D {
   }
 
   // ---------------------------------------------------------------- image
-  // Qualité adaptative : si le téléphone peine (moins de ~35 i/s), on allège l'image une fois.
+  // V1.7 (retour de bêta : « jeu de 1996 ») : qualité adaptative revue, voir qualityStep() plus haut.
+  //  - on ignore les 4 premières secondes (chargement, compilation des shaders) ;
+  //  - on ne baisse que si c'est lent DURABLEMENT (2 mesures de 3 s d'affilée sous 30 i/s) ;
+  //  - on allège d'abord les ombres puis l'anticrénelage, la résolution en dernier, et jamais sous 2
+  //    (ou la résolution de l'écran si elle est plus petite) sauf en « Économe » ;
+  //  - si ça redevient fluide (2 mesures au-dessus de 50 i/s), on remonte d'un cran.
   adaptQuality(dt) {
-    if (this.lowQuality) return;
-    this.perf = this.perf || { n: 0, sum: 0 };
-    this.perf.n++;
-    this.perf.sum += dt;
-    if (this.perf.n < 90) return;
-    const avg = this.perf.sum / this.perf.n;
-    this.perf = { n: 0, sum: 0 };
-    if (avg > 1 / 35) {
-      this.lowQuality = true;
-      this.dpr = Math.min(this.dpr, 1.25);
-      this.renderer.setPixelRatio(this.dpr);
-      this.renderer.setSize(this.w, this.h, false);
-      this.renderer.shadowMap.type = this.T3.PCFShadowMap;
-      this.sun.shadow.mapSize.set(1024, 1024);
-      this.sun.shadow.map?.dispose();
-      this.sun.shadow.map = null;
+    const mode = settings.quality;
+    if (mode !== this.qMode) { this.qMode = mode; this.applyQuality(mode === 'eco' ? QUALITY_STEPS.length - 1 : 0); this.perf = null; }
+    if (mode !== 'auto') return;
+    const p = this.perf || (this.perf = { warm: 0, n: 0, sum: 0, slow: 0, fast: 0 });
+    if (p.warm < QUALITY.warmup) { p.warm += dt; return; }
+    p.n++;
+    p.sum += dt;
+    if (p.sum < QUALITY.window) return;
+    const fps = p.n / p.sum;
+    p.n = 0; p.sum = 0;
+    const next = qualityStep(this.qLevel || 0, fps, p);
+    if (next !== (this.qLevel || 0)) this.applyQuality(next);
+  }
+
+  // Réglage du menu ☰ : appliqué tout de suite (textures redessinées à la bonne taille au prochain rechargement).
+  setQuality() {
+    this.qMode = null; // adaptQuality() relit settings.quality à la prochaine image
+  }
+
+  applyQuality(level) {
+    this.qLevel = level;
+    const st = QUALITY_STEPS[level];
+    this.lowQuality = level > 0;
+    const sh = this.sun.shadow;
+    const type = st.softShadows ? this.T3.PCFSoftShadowMap : this.T3.PCFShadowMap;
+    if (sh.mapSize.x !== st.shadowMap) {
+      sh.mapSize.set(st.shadowMap, st.shadowMap);
+      sh.map?.dispose();
+      sh.map = null;
     }
+    if (this.renderer.shadowMap.type !== type) {
+      // le type d'ombre change le code des matériaux : recompilés une fois (pas à chaque palier)
+      this.renderer.shadowMap.type = type;
+      sh.map?.dispose();
+      sh.map = null;
+      for (const m of Object.values(this.vm)) m.needsUpdate = true;
+      for (const m of this.mats.values()) m.needsUpdate = true;
+    }
+    this.resize();
   }
 
   updateHalos() {

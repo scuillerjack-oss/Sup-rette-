@@ -269,7 +269,7 @@ export const STEPS = [
   {
     id: 'summary',
     title: 'Le bilan de la journée',
-    text: () => 'Chaque soir : <b>Ventes</b>, <b>Achats</b> de marchandise, <b>Loyer et charges</b> (ils montent avec la taille du magasin) et le <b>Résultat</b>. Touche « ❓ demandes non satisfaites » pour comprendre : un client voulait un produit absent ou vide. Puis « Préparer le jour 2 ».',
+    text: () => 'Chaque soir : l\'<b>argent de la journée</b> (ventes, achats, loyer), le <b>stock gardé pour demain</b> (pas perdu !) et le <b>Résultat réel</b>. Touche « ❓ demandes ratées » pour comprendre : un client voulait un produit absent ou vide. Puis « Préparer le jour 2 ».',
     done: (g) => g.state.day >= 2 && g.state.phase !== 'summary',
     target: () => ({ dom: ['#modalCard .sum', '#modalCard .chipbtn', '#modalCard [data-a="next"]'] })
   },

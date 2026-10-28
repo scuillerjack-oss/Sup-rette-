@@ -1,5 +1,6 @@
 // Rendu Canvas 2D haute définition : magasin vu de dessus en légère perspective.
 import { DECO_BY_ID } from './rewards.js';
+import { settings } from './audio.js';
 import { COLS, ROWS, DELIVERY_SPOTS, ZONES, SHELF_SLOTS, SHELF_CAPACITY, REGISTERS, PRODUCT_BY_ID, PRODUCTS, DOOR, STAFF, SHOP_TOP, AUTO_SPOTS, staffLook } from './data.js';
 
 const FONT = '"Baloo 2", "Nunito", system-ui, sans-serif';
@@ -141,7 +142,8 @@ export class Renderer {
 
   resize() {
     const box = this.canvas.parentElement.getBoundingClientRect();
-    this.dpr = Math.min(3, window.devicePixelRatio || 1);
+    // Résolution réelle de l'écran (jusqu'à ×3) ; « Économe » (V1.7) : ×2 au plus.
+    this.dpr = Math.min(settings.quality === 'eco' ? 2 : 3, window.devicePixelRatio || 1);
     this.w = box.width;
     this.h = box.height;
     this.canvas.width = Math.round(this.w * this.dpr);
@@ -172,6 +174,8 @@ export class Renderer {
   tileScreen(r, c) {
     return { x: this.ox + (c + 0.5) * this.T, y: this.oy + (r + 0.5) * this.T - this.shift };
   }
+
+  setQuality() { this.resize(); }
 
   addRipple(px, py) {
     this.ripples.push({ x: px, y: py, t: 0 });
