@@ -386,7 +386,7 @@ test('erreurs de caisse : erreur, détection et réaction séparées (règle de 
 });
 
 // Popularité due aux erreurs de caisse seulement (le « merci » d'un client content compte à part : « service »).
-const cashRep = (g) => (g.state.stats.rep.cadeau || 0) + (g.state.stats.rep.arnaque || 0) + (g.state.stats.rep.personnel || 0);
+const cashRep = (g) => (g.state.stats.rep.cadeau || 0) + (g.state.stats.rep.arnaque || 0) + (g.state.stats.rep.caissier || 0) + (g.state.stats.rep.personnel || 0); // V1.7 : « caissier » = erreur remarquée d'un caissier
 
 function atRegister(g, basket) {
   g.state.shelves[0] = { slot: 'A3', product: 'eau', qty: 10 };

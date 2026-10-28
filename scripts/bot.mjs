@@ -8,7 +8,10 @@ import { PRODUCTS, PRODUCT_BY_ID, SHELF_SLOTS, SHELF_CAPACITY, ZONES, REGISTERS,
 // noInvest : ne rien acheter d'autre que la marchandise (pour comparer des pièces à pièces).
 // chests (V1.6) : joueur qui ouvre TOUS les coffres (caissier, magasinier, déco) chaque jour et double chaque bilan
 // en bénéfice. rng : tirage des coffres (graine pour des mesures reproductibles).
-export function playBot({ days = 30, skill = 1, log = false, maxRealSeconds = 1e9, overcharge = 0, noInvest = false, chests = false, rng = Math.random } = {}) {
+// cashierStars (V1.7) : à partir du jour 3, un caissier de ce niveau tient la caisse 1 (contrat renouvelé), pour
+// mesurer les objectifs du jour d'un joueur qui joue correctement avec un caissier débutant.
+// onDay(game) : appelé à chaque bilan (mesures des tests).
+export function playBot({ days = 30, skill = 1, log = false, maxRealSeconds = 1e9, overcharge = 0, noInvest = false, chests = false, rng = Math.random, cashierStars = 0, onDay = null } = {}) {
   const g = new Game();
   g.speed = 1;
   const marks = {};
@@ -19,6 +22,12 @@ export function playBot({ days = 30, skill = 1, log = false, maxRealSeconds = 1e
     const s = g.state;
     // --- Préparation : achats
     if (!noInvest) invest(g);
+    if (cashierStars && s.day >= 3 && !s.staff.cashiers.length) {
+      const m = { id: g.newStaffId(), name: 'Léa', level: cashierStars, look: 0, days: 7 };
+      g.addToRoster('cashier', m, 'embauche');
+      g.putUnderContract('cashier', m);
+      g.syncStaff();
+    }
     if (chests) {
       for (const kind of ['cashier', 'stocker', 'deco']) {
         const r = g.claimReward(kind, { rng, now: 0, ad: true });
@@ -44,6 +53,7 @@ export function playBot({ days = 30, skill = 1, log = false, maxRealSeconds = 1e
       if (r.ok) { chestLog.doubled++; chestLog.doubleCoins += r.bonus; }
     }
     dayStats.push({ ...s.lastSummary, level: s.level, coins: s.coins });
+    if (onDay) onDay(g);
     if (log) console.log(`J${s.day} niv${s.level} pièces ${(s.coins / 100).toFixed(0)} clients ${s.lastSummary.served} fâchés ${s.lastSummary.angry} manquants ${s.lastSummary.missing} rep ${s.reputation.toFixed(0)}`);
     for (const L of [5, 10, 15, 20, 25]) if (s.level >= L && marks[`level${L}`] == null) marks[`level${L}`] = s.day;
     if (s.zones.length === 3 && marks.zones == null) marks.zones = s.day;

@@ -52,7 +52,8 @@ export function newState() {
 function emptyStats() {
   // missing = demandes non satisfaites (un client voulait un produit absent ou en quantité insuffisante) ;
   // missingBy = le détail par produit (V1.4, pour le bilan).
-  return { revenue: 0, spent: 0, sold: 0, served: 0, angry: 0, missing: 0, missingBy: {}, profitItems: 0, perfect: 0, rep: {} };
+  // V1.7 : cogs = coût d'achat (prix du carton / articles) des articles VENDUS ; staffErrBy = erreurs par caissier.
+  return { revenue: 0, spent: 0, cogs: 0, sold: 0, served: 0, angry: 0, missing: 0, missingBy: {}, profitItems: 0, perfect: 0, rep: {}, staffErrBy: {} };
 }
 
 // ---------------------------------------------------------------- erreurs de caisse (V1.4)
@@ -191,13 +192,16 @@ const SHIRTS = ['#3a7bd5', '#e85d75', '#2bb673', '#f2a541', '#8e6cdf', '#30a5bf'
 // ---------------------------------------------------------------- objectifs du jour (V1.2)
 // value(stats, state) = avancement ; « max » = objectif à ne pas dépasser (jugé en fin de journée).
 const sumRep = (st) => Object.values(st.rep || {}).reduce((a, v) => a + v, 0);
+// V1.7 : pour l'objectif de popularité, les erreurs REMARQUÉES d'un caissier (cause « caissier ») ne comptent pas :
+// c'est la malchance de l'équipe (un 1★ se trompe 1 fois sur 10), pas le jeu du joueur. Ses propres erreurs comptent.
+const goalRep = (st) => Object.entries(st.rep || {}).reduce((a, [k, v]) => (k === 'caissier' ? a : a + v), 0);
 export const GOAL_KINDS = {
   serve: { icon: '🧺', label: (t) => `Servir ${t} clients`, value: (st) => st.served },
   sell: { icon: '📦', label: (t) => `Vendre ${t} articles`, value: (st) => st.sold },
-  perfect: { icon: '🪙', label: (t) => `Rendre la monnaie juste ${t} fois`, value: (st) => st.perfect || 0 },
+  perfect: { icon: '🪙', label: (t) => `Rendre la monnaie juste ${t} fois`, short: (t) => `Monnaie juste ${t} fois`, value: (st) => st.perfect || 0 },
   calm: { icon: '😌', label: () => 'Aucun client parti fâché', value: (st) => st.angry, max: true, min: (st) => st.served >= 5 },
-  stock: { icon: '❓', label: (t) => `Au plus ${t} demandes non satisfaites`, value: (st) => st.missing, max: true, min: (st) => st.served >= 5 },
-  pop: { icon: '⭐', label: (t) => `Gagner ${t} points de popularité`, value: (st) => Math.max(0, Math.floor(sumRep(st) * 10) / 10) }
+  stock: { icon: '❓', label: (t) => `Au plus ${t} demandes non satisfaites`, short: (t) => `≤ ${t} demandes ratées`, value: (st) => st.missing, max: true, min: (st) => st.served >= 5 },
+  pop: { icon: '⭐', label: (t) => `Gagner ${String(t).replace('.', ',')} point${t >= 2 ? 's' : ''} de popularité`, short: (t) => `+${String(t).replace('.', ',')} de popularité`, value: (st) => Math.max(0, Math.floor(Math.round(goalRep(st) * 1e6) / 1e5) / 10) }
 };
 
 // Ce qu'un niveau débloque (fenêtre « Niveau N ! » et tutoriel V1.5).
@@ -251,6 +255,23 @@ export class Game {
     // Ancienne sauvegarde (V1.1 et avant) : pas encore d'objectifs du jour.
     if (!this.state.goals || this.state.goals.day !== this.state.day) this.planDay(this.state.phase === 'prep');
     if (this.state.phase === 'open' || this.state.phase === 'closing') this.spawnClock = 0;
+    // V1.7 : valeur du stock au début de la journée (pour le bilan) : partie neuve, tutoriel ou partie d'avant la
+    // V1.7 en préparation (rien d'acheté ni de vendu). Journée déjà entamée : inconnue (achats − coût des ventes).
+    const st0 = this.state.stats;
+    if (st0.stockStart == null && this.state.phase === 'prep' && !st0.spent && !st0.sold) st0.stockStart = this.stockValue();
+  }
+
+  // V1.7 : valeur de la marchandise au PRIX D'ACHAT (rayons, réserve, en route, cartons portés), en centimes.
+  stockValue() {
+    const s = this.state;
+    const unit = (id) => (PRODUCT_BY_ID[id] ? cents(PRODUCT_BY_ID[id].cartonCost) / PRODUCT_BY_ID[id].qty : 0);
+    let v = 0;
+    for (const x of s.shelves) if (x.product) v += unit(x.product) * x.qty;
+    for (const st of s.delivery) for (const c of st) v += unit(c.product) * c.qty;
+    for (const d of s.pending) v += unit(d.product) * (d.qty || (PRODUCT_BY_ID[d.product] ? PRODUCT_BY_ID[d.product].qty : 0));
+    for (const a of [this.player, this.stocker]) if (a && a.carry) v += unit(a.carry.product) * a.carry.qty;
+    for (const cu of this.customers || []) for (const it of cu.basket || []) v += unit(it.product);
+    return Math.round(v);
   }
 
   on(fn) {
@@ -325,9 +346,14 @@ export class Game {
   zoneOwned(zoneId) {
     return this.state.zones.includes(zoneId);
   }
-  stockedTypes() {
+  // withReserve (V1.7, objectifs) : compte aussi les produits en réserve ou en route (rangés avant l'ouverture).
+  stockedTypes(withReserve = false) {
     const set = new Set();
     for (const s of this.state.shelves) if (s.product && s.qty > 0) set.add(s.product);
+    if (withReserve) {
+      for (const st of this.state.delivery) for (const c of st) set.add(c.product);
+      for (const d of this.state.pending) set.add(d.product);
+    }
     return set.size;
   }
   deliveryCount() {
@@ -1156,32 +1182,81 @@ export class Game {
       const ok = EVENTS.filter((e) => !e.wanted || e.wanted.some((id) => s.licences.includes(id)));
       s.event = pick(ok).id;
     }
-    const expected = customersPerDay(s, Math.max(1, this.stockedTypes()), this.dayMultiplier());
-    const serve = Math.max(5, Math.round(expected * 0.95));
-    const perClient = 1.5 + 0.15 * Math.min(10, s.level);
-    const targets = {
-      serve,
-      sell: Math.max(8, Math.round(serve * perClient * 0.85)),
-      perfect: s.level < 4 ? 2 : 3,
-      calm: 0,
-      stock: 2,
-      pop: s.reputation > 85 ? 0.5 : s.reputation > 60 ? 1 : 2
-    };
+    const targets = this.goalTargets();
     // « Monnaie juste » seulement si le joueur peut encore tenir une caisse lui-même.
     const allStaffed = this.dutyCashiers().length >= s.registers.length;
     const kinds = Object.keys(GOAL_KINDS).filter((k) => !(k === 'perfect' && allStaffed));
     const list = [];
     while (s.day >= GOALS_FROM_DAY && list.length < GOALS_PER_DAY) {
       const k = kinds.splice(Math.floor(Math.random() * kinds.length), 1)[0];
-      list.push({ kind: k, target: targets[k], reward: cents(goalReward(s.level)) });
+      // auto (V1.7) : objectif réajusté jusqu'à l'ouverture (équipe embauchée, stock commandé), puis figé.
+      list.push({ kind: k, target: targets[k], reward: cents(goalReward(s.level)), auto: true });
     }
     s.goals = { day: s.day, list };
+  }
+
+  // V1.7 (retour de bêta du 28/10) : objectifs justes et atteignables.
+  //  - clients et articles : calculés sur ce que les clients DEMANDENT vraiment (taille moyenne des listes d'achats,
+  //    licences possédées), et « Vendre N articles » ne dépasse jamais 75 % de la marchandise disponible à
+  //    l'ouverture (rayons + réserve + en route) : on n'est pas puni d'avoir peu de stock, on vise ce qu'on peut vendre ;
+  //  - popularité : ce qu'un service correct rapporte selon le nombre de clients attendus et la popularité actuelle
+  //    (plus on est connu, plus chaque point coûte), MOINS les erreurs attendues des caissiers en poste
+  //    (un caissier 1★ se trompe 1 fois sur 10 : l'objectif baisse d'autant) ;
+  //  - réajustés jusqu'à l'ouverture (embauche, intérimaire, commande), puis figés pour la journée.
+  goalTargets() {
+    const s = this.state;
+    const expected = customersPerDay(s, Math.max(1, this.stockedTypes(true)), this.dayMultiplier());
+    const serve = Math.max(5, Math.round(expected * 0.9));
+    const maxItems = Math.min(5, 1.5 + Math.floor(s.level / 4)); // moyenne de spawnCustomer (0 ou 1 en plus)
+    const listLen = Math.min(s.licences.length, (1 + maxItems) / 2);
+    const perClient = listLen * 1.3 + (EVENT_BY_ID[s.event]?.extra || 0);
+    const units = this.unitsAvailable();
+    const sell = Math.max(6, Math.min(Math.round(serve * perClient * 0.8), Math.floor(units * 0.75)));
+    // Popularité : ~45 % de clients ravis (+0,3 × (1 − popularité/115) chacun), plus ou moins l'effet « Personnel »
+    // de l'équipe en poste (0,12 par étoile au-dessus de 2★, en dessous ça baisse). Les erreurs remarquées des
+    // caissiers ne comptent pas dans cet objectif (voir goalRep).
+    const team = [...this.dutyCashiers(), ...(this.dutyStocker() ? [this.dutyStocker()] : [])];
+    const perHappy = 0.3 * (1 - s.reputation / 115);
+    let pop = expected * 0.4 * perHappy + team.reduce((a, m) => a + 0.12 * (m.level - 2), 0);
+    pop = Math.max(0.3, Math.min(2, Math.round(pop * 10) / 10));
+    return { serve, sell, perfect: s.level < 4 ? 2 : 3, calm: 0, stock: 2, pop };
+  }
+
+  // Articles disponibles (rayons + réserve + porté + en route).
+  unitsAvailable() {
+    const s = this.state;
+    let n = s.shelves.reduce((a, x) => a + x.qty, 0);
+    for (const st of s.delivery) for (const c of st) n += c.qty;
+    for (const d of s.pending) n += d.qty || (PRODUCT_BY_ID[d.product] ? PRODUCT_BY_ID[d.product].qty : 0);
+    if (this.player && this.player.carry) n += this.player.carry.qty;
+    if (this.stocker && this.stocker.carry) n += this.stocker.carry.qty;
+    return n;
+  }
+
+  // Réajuste les objectifs « auto » (avant l'ouverture). « Monnaie juste » devenue impossible (toutes les caisses
+  // tenues par un caissier embauché après le tirage) : remplacée par un autre objectif, toujours le même ordre.
+  fitGoals() {
+    const s = this.state;
+    if (!s.goals || s.goals.day !== s.day || s.phase !== 'prep') return;
+    const list = s.goals.list;
+    if (!list.some((g) => g.auto)) return;
+    const t = this.goalTargets();
+    const allStaffed = this.dutyCashiers().length >= s.registers.length;
+    for (const g of list) {
+      if (!g.auto) continue;
+      if (g.kind === 'perfect' && allStaffed) {
+        const k = ['pop', 'serve', 'sell', 'calm', 'stock'].find((x) => !list.some((o) => o.kind === x));
+        if (k) g.kind = k;
+      }
+      g.target = t[g.kind];
+    }
   }
 
   // Avancement des objectifs : { kind, label, value, target, done, failed, reward }
   goalsStatus(final = false) {
     const s = this.state;
     if (!s.goals) return [];
+    if (s.phase === 'prep') this.fitGoals();
     return s.goals.list.map((g) => {
       const def = GOAL_KINDS[g.kind];
       const value = def.value(s.stats, s);
@@ -1190,7 +1265,7 @@ export class Game {
         failed = value > g.target;
         done = final && !failed && def.min(s.stats);
       } else done = value >= g.target;
-      return { kind: g.kind, icon: def.icon, label: def.label(g.target), value, target: g.target, done, failed, max: !!def.max, reward: g.reward };
+      return { kind: g.kind, icon: def.icon, label: def.label(g.target), short: def.short ? def.short(g.target) : def.label(g.target), value, target: g.target, done, failed, max: !!def.max, reward: g.reward };
     });
   }
 
@@ -1217,6 +1292,7 @@ export class Game {
   openStore() {
     const s = this.state;
     if (s.phase !== 'prep') return;
+    this.fitGoals(); // V1.7 : objectifs figés à l'ouverture, selon l'équipe en poste et le stock
     s.phase = 'open';
     this.spawnClock = 2; // premier client rapidement
     this.emit('sfx', { name: 'open' });
@@ -1225,6 +1301,7 @@ export class Game {
 
   endDay() {
     const s = this.state;
+    const teamNow = this.dutyCashiers().map((c) => ({ name: c.name, level: c.level })); // avant le départ de l'intérimaire
     const pop = this.dailyPopularity();
     this.addReputation(pop.choix, 'choix');
     if (pop.personnel) this.addReputation(pop.personnel, 'personnel');
@@ -1245,7 +1322,14 @@ export class Game {
       missing: s.stats.missing,
       missingBy: { ...(s.stats.missingBy || {}) },
       cashErrors: s.stats.cashErrors ? { ...s.stats.cashErrors } : null,
-      profit: s.stats.revenue - s.stats.spent - charges + goalCoins,
+      // V1.7 : « cash » = argent gagné ou dépensé dans la journée (trésorerie, l'ancien « Résultat ») ;
+      // « stockDelta » = marchandise gardée en plus (ou entamée) pour demain, au prix d'achat ;
+      // « profit » = résultat RÉEL = cash + stockDelta = ventes − coût d'achat de ce qui est vendu − loyer + primes.
+      // C'est lui que double le « Bilan doublé » : acheter du stock ne le fait ni baisser ni monter (non exploitable).
+      cash: s.stats.revenue - s.stats.spent - charges + goalCoins,
+      stockDelta: 0,
+      stockValue: 0,
+      profit: 0,
       goals,
       goalCoins,
       event: s.event,
@@ -1272,6 +1356,11 @@ export class Game {
       s.temps[kind] = null;
     }
     if (left.length) summary.tempLeft = left.join(' et ');
+    summary.stockValue = this.stockValue();
+    summary.stockDelta = s.stats.stockStart != null ? summary.stockValue - s.stats.stockStart : s.stats.spent - (s.stats.cogs || 0);
+    summary.profit = summary.cash + summary.stockDelta;
+    summary.staffErrBy = { ...(s.stats.staffErrBy || {}) };
+    summary.team = teamNow;
     s.totals.revenue += s.stats.revenue;
     s.totals.days++;
     s.lastSummary = summary;
@@ -1294,6 +1383,7 @@ export class Game {
     this.syncStaff();
     this.planDay();
     this.checkAid();
+    s.stats.stockStart = this.stockValue();
     this.emit('phase', { phase: 'prep' });
     this.emit('save');
   }
@@ -1563,7 +1653,7 @@ export class Game {
         this.say(cu, '😕');
       }
     } else if (cu.basket.length === 0) {
-      this.addReputation(-0.4);
+      this.addReputation(-0.4, 'vide'); // V1.7 : reparti sans rien (rayons vides), rangé à part pour le bilan
       this.say(cu, '😕');
     }
     this.goto(cu, DOOR.r, DOOR.c, () => {
@@ -1580,7 +1670,7 @@ export class Game {
     }
     cu.basket = [];
     s.stats.angry++;
-    this.addReputation(-1.6);
+    this.addReputation(-1.6, 'attente'); // V1.7 : parti fâché (file trop longue), rangé à part pour le bilan
     this.say(cu, '😠', 3);
     this.emit('sfx', { name: 'angry' });
     if (this.checkout && this.checkout.customerId === cu.id) this.checkout = null;
@@ -1603,6 +1693,7 @@ export class Game {
     let cost = 0;
     for (const it of cu.basket) cost += cents(PRODUCT_BY_ID[it.product].cartonCost) / PRODUCT_BY_ID[it.product].qty;
     s.stats.profitItems += total - cost;
+    s.stats.cogs = (s.stats.cogs || 0) + Math.round(cost);
     this.gainXp(cu.basket.length + 2);
     const reg = registerById(cu.register);
     this.fx.push({ kind: 'coins', x: reg.pay.c, y: reg.pay.r, value: received, t: 0 });
@@ -1789,7 +1880,8 @@ export class Game {
     if (!err.favor) return { noticed: false, refused: false };
     const noticed = cashDetect(err, chance);
     const re = cashReaction(err, noticed, who);
-    if (re.rep) this.addReputation(re.rep, re.why);
+    // V1.7 : une erreur remarquée d'un caissier est rangée à part (« caissier ») pour l'expliquer au bilan.
+    if (re.rep) this.addReputation(re.rep, re.why === 'arnaque' && who === 'cashier' ? 'caissier' : re.why);
     // Bouche-à-oreille (V1.5) : des clients en moins les jours suivants, voir dayMultiplier().
     if (re.distrust && who === 'player') this.state.distrust = (this.state.distrust || 0) + re.distrust;
     cu.mood += re.mood;
@@ -1977,6 +2069,9 @@ export class Game {
           const over = Math.random() < 0.5;
           received = over ? total + it.price : total - it.price;
           this.state.stats.staffErrors = (this.state.stats.staffErrors || 0) + 1;
+          const eb = this.state.stats.staffErrBy || (this.state.stats.staffErrBy = {});
+          const ek = cashier.name;
+          eb[ek] = { level: cashier.level, n: ((eb[ek] && eb[ek].n) || 0) + 1 };
           const mk = this.cashMistake(cu, total, received, CASH_ERRORS.notice.cashier, 'cashier');
           this.emit('staffError', { name: cashier.name, over, amount: it.price, noticed: mk.noticed, refused: mk.refused });
           if (mk.refused) {

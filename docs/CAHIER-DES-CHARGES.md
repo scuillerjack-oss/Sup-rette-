@@ -433,13 +433,102 @@ magasinier faisait disparaître le magasinier intérimaire (un seul intérimaire
 - Coupure de l'appli pendant une fausse pub : la récompense est perdue (le coffre du jour reste disponible).
 - Vérifié en Chrome mobile simulé, pas sur un vrai Xiaomi.
 
-## Prochaine version (V1.7)
-1. **Concurrents dans le quartier** : 1 puis 2 magasins rivaux qui apparaissent avec la progression ; ils prennent des
-   clients quand ta popularité est plus basse que la leur (facteur dans `dayMultiplier()`), font parfois des promos,
-   et apparaissent dans le bilan (« Le Discount d'en face t'a pris 6 clients »).
-2. Retours de bêta de Jack sur les graphismes V1.2, les objectifs et les événements (on garde, on ajuste ou on enlève).
+### V1.7 — retours de bêta du 28/10/2026 : bilan débloqué, image nette, bilan et objectifs clairs (28/10/2026)
+Retours de Jack (APK de bêta, Xiaomi Android, partie jouée jusqu'au jour 3). Les **concurrents** prévus en V1.7 sont
+**reportés à la V1.8** : le bug bloquant passait avant tout.
+
+**1. Bug bloquant : impossible de passer au jour 4.** Le bilan du jour 3 (objectifs + lignes de popularité + pastilles
++ fin de contrat + intérimaire) était plus haut que l'écran ; la fenêtre ne défilait pas (`#modal` sans marge
+ni défilement, `#modalCard` sans hauteur maximale, page en `overflow: hidden`) et le bouton « Préparer le jour 4 »
+était caché sous la barre de navigation Android. Corrigé pour **toutes** les fenêtres : carte limitée à la hauteur
+visible (`100dvh`, repli `100vh`, moins les zones sûres `--sat`/`--sab` et 20 px de marge), contenu qui défile
+à l'intérieur. Au bilan : le bouton est dans un **pied fixe** collé en bas de la carte, toujours visible au-dessus
+de la zone sûre ; le reste défile au-dessus. Vérifié aussi : fenêtre du tutoriel (`tt-room`, sous la bulle, elle
+reste dans l'écran) et coffre (l'animation reste coupée sur les côtés, le contenu défile si besoin).
+Contrôle automatique en Chrome simulé : `scripts/check-bilan.mjs` (390×844 et 360×640, bilan très chargé,
+bouton visible, rien par-dessus, touché, fausse pub imposée fermée, jour 4 en préparation). Avant la correction :
+bouton à 909 px sur un écran de 844 (et à 927 px sur 640), impossible à toucher. Partie automatique de 7 jours
+(coffres compris) : aucun blocage.
+
+**2. Image floue (« jeu de 1996 »).** Avant : la qualité adaptative mesurait 90 images, souvent pendant le
+chargement, et passait **pour toujours** à une résolution ×1,25 si la moyenne était sous 35 i/s ; et la
+résolution était plafonnée à ×2. Sur un Xiaomi (écran ×2,75), image très floue. Maintenant :
+- les 4 premières secondes sont ignorées (chargement, compilation) ; mesure sur des fenêtres de 3 s ; on ne baisse
+  que si c'est lent **deux fois de suite** (moins de 30 i/s), et on **remonte** si c'est fluide deux fois (plus de 50) ;
+- on allège d'abord les **ombres** (2048 douces → 1024 simples), la résolution ensuite (×3 → ×2,5 → ×2), et
+  **jamais sous ×2** (ou la résolution de l'écran si elle est plus petite) en Auto et en Haute. L'anticrénelage
+  WebGL se choisit à la création de l'image : on ne peut pas le couper en route, il reste actif (peu coûteux) ;
+- menu ☰ → **« Qualité d'image : Auto / Haute / Économe »**, sauvegardé avec les réglages existants
+  (`superette-settings-v1`, nouveau champ `quality`, aucune clé renommée). Économe : ×1,25, ombres simples,
+  textures non agrandies, c'est l'ancien mode « graphismes économes » proposé pour la V1.7 ;
+- netteté des dessins : icônes des produits (panneaux du jeu, tapis de caisse) dessinées à la résolution réelle de
+  l'écran (avant : ×2 fixe) ; enseigne, panneau RÉSERVE, sol du magasin et de la réserve, étiquettes des cartons
+  dessinés 1,5 à 2 fois plus grands (icônes des cartons en 256 px au lieu de 128) ; textes par-dessus la 3D et
+  repli 2D déjà à la résolution de l'écran (jusqu'à ×3). Captures avant/après dans la Pull Request.
+
+**3. Bilan et objectifs plus clairs et plus justes.**
+- **Bilan** : phrase-résumé en tête (« Journée d'investissement : tu as rempli ton stock… », « Belle journée ! »,
+  « Journée difficile… »), puis **Argent de la journée** (ventes, achats, loyer, primes → « Argent gagné ou dépensé »),
+  **Stock gardé pour demain** (marchandise achetée et pas encore vendue, au prix d'achat) et **Résultat réel**.
+  Le cas de Jack (ventes 42,30, achats 151,20, loyer 23) : −129,90 d'argent dépensé mais l'essentiel est dans
+  la réserve, le résultat réel n'est que de quelques pièces en moins ou en plus.
+- **Choix pour le Bilan doublé** : il double le **résultat réel** (= ventes − prix d'achat des articles vendus −
+  loyer + primes). Juste : une journée d'investissement n'est plus « en perte » à cause du stock rempli. Non
+  exploitable : acheter beaucoup de stock ne fait pas monter le résultat réel (le stock compte au prix d'achat,
+  pas au prix de vente), donc ne gonfle pas le bonus. La valeur du stock est mesurée au début et à la fin de la
+  journée (`stats.stockStart`) ; une partie plus ancienne déjà entamée utilise achats − coût des articles vendus.
+- **Popularité** : d'abord le total du jour (« Popularité : +0,4 aujourd'hui → 27 % »), puis 5 lignes courtes sur
+  2 colonnes : Prix, Clients (clients ravis, partis fâchés d'attendre, repartis sans rien), Caisse (erreurs en
+  faveur du client, remarquées par le client, erreurs du caissier), Rayons, Équipe. Une **astuce** explique la plus
+  grosse baisse (ex. « Ta caissière Léa 1★ s'est trompée 4 fois : une caissière mieux notée fait moins d'erreurs »).
+  Les erreurs remarquées d'un caissier sont rangées à part (`caissier`, au lieu de `arnaque`) ; « parti fâché »
+  (`attente`) et « reparti sans rien » (`vide`) aussi (avant : dans « Service »). Mêmes valeurs qu'avant.
+- **Objectifs** (choix d'équilibrage, vérifiés au robot) :
+  - **popularité** : cible = ce qu'un service correct rapporte (≈ 40 % de clients ravis selon le nombre de clients
+    attendus et la popularité actuelle) ± l'effet « Équipe » des employés en poste, entre +0,3 et +2 (avant :
+    toujours +2 sous 60 %). Les erreurs **remarquées du caissier** ne comptent plus pour cet objectif (malchance de
+    l'équipe, pas jeu du joueur) ; celles du joueur comptent. Le cas de Jack (+0,4 dont −2,3 d'erreurs de la
+    caissière 1★) aurait été réussi ;
+  - **ventes et clients** : calculés sur les listes d'achats réelles et les produits possédés, et « Vendre N
+    articles » ne dépasse jamais 75 % de la marchandise disponible à l'ouverture (rayons + réserve + en route) ;
+  - objectifs **réajustés jusqu'à l'ouverture** (embauche, intérimaire, commande) puis figés ; « Monnaie juste »
+    remplacé si un caissier prend la seule caisse avant l'ouverture ;
+  - **progression affichée** (27/29, +0,4 / +1,3, 1 (max 2)) au bilan, dans le panneau des objectifs et sur le
+    bouton 🎯 pendant la journée (objectif le plus avancé) ;
+  - simulation (`scripts/bot.mjs`, nouvelle option `cashierStars`) : un joueur appliqué avec un caissier 1★
+    réussit **2,8 objectifs sur 3** en moyenne (2,3 avant ; popularité réussie 93 % du temps au lieu de 32 %) ;
+    joueur plus lent (moitié moins vite à la caisse) : 2,76 ; sans caissier : 2,75 (inchangé). Primes inchangées.
+- **Économie** (robot, 45 journées, 8 parties avec graine) : niveau 10 au jour **31,4** sans coffres (V1.6 : 30,6)
+  et **28,9** en ouvrant tous les coffres et en doublant chaque bilan (V1.6 : 28,6). Le bilan doublé rapporte
+  environ 8 % de plus au total (3 700 pièces contre 3 430 sur 45 jours) : il compte désormais le stock gardé,
+  mais plus l'argent dépensé en marchandise. Rythme pratiquement inchangé.
+- **Lisible à 360 px** : libellés courts (« 6 demandes ratées », « ≤ 2 demandes ratées »), montants jamais coupés,
+  popularité sur 2 colonnes, objectifs alignés avec leur progression à droite.
+
+**Sauvegarde** : clé `superette-save-v1` inchangée, via `createSaver`. Nouveaux champs du jour (`stats.cogs`,
+`stats.stockStart`, `stats.staffErrBy`, `goals.list[].auto`) et du bilan (`cash`, `stockDelta`, `stockValue`,
+`staffErrBy`, `team`). Une partie V1.6 rouverte au bilan affiche l'ancien bilan sans planter.
+
+**Vérifications** : 139 tests Node (tous verts), dont 18 nouveaux (`tests/v17.test.mjs`, un par bug corrigé, plus la simulation
+des objectifs et le contrôle Chrome du bilan). Chrome mobile simulé (Chrome 153 via Playwright, WebGL logiciel),
+390×844 et 360×640, partie réelle au bilan du jour 3 très chargé : bouton visible, touché, jour 4 démarré ;
+captures avant/après du bilan et du magasin (netteté) ; menu ☰ → Qualité d'image (Économe ×1,25, Haute ×3,
+gardée après rechargement) ; objectifs pendant la journée (bouton 🎯 avec progression, panneau) ; coffre ; étape
+« Le bilan de la journée » du tutoriel (fenêtre sous la bulle, bouton visible, jour 2) ; aucune erreur du jeu en console.
+
+**Limites connues** :
+- Vérifié en Chrome simulé (WebGL logiciel), pas sur le vrai Xiaomi : à confirmer par Jack sur l'APK.
+- Sur un téléphone vraiment lent, l'Auto descend jusqu'à ×2 (pas plus bas) : choisir « Économe » à la main.
+- Le texte « Qualité d'image » s'applique tout de suite à la résolution et aux ombres ; les textures déjà
+  dessinées (enseigne, sol) gardent leur taille jusqu'au prochain lancement.
+
+## Prochaine version (V1.8)
+1. **Concurrents dans le quartier** (reportés de la V1.7) : 1 puis 2 magasins rivaux qui apparaissent avec la
+   progression ; ils prennent des clients quand ta popularité est plus basse que la leur (facteur dans
+   `dayMultiplier()`), font parfois des promos, et apparaissent dans le bilan (« Le Discount d'en face t'a pris
+   6 clients »).
+2. Retours de bêta de Jack sur la V1.7 (bilan, objectifs, netteté sur le Xiaomi) : on garde, on ajuste ou on enlève.
 3. Proposé : un écran « Mon quartier » simple (popularité comparée aux concurrents, événement du jour).
-4. Proposé : réglage « graphismes économes » manuel dans le menu, pour les téléphones très modestes.
 
 ## Pistes suivantes
 Gains hors ligne, frigos et produits frais, prix du marché qui bougent, plus de décorations, musique

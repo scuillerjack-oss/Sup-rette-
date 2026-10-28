@@ -2,7 +2,9 @@
 let ctx = null;
 let master = null;
 // simAds (V1.6) : « Simuler les pubs (bêta) », activé par défaut (fausses pubs de src/ads.js, aucune vraie pub).
-export const settings = { sound: true, haptics: true, simAds: true };
+// quality (V1.7) : « Qualité d'image » du menu ☰ : 'auto' (par défaut), 'high' (Haute) ou 'eco' (Économe).
+export const settings = { sound: true, haptics: true, simAds: true, quality: 'auto' };
+export const QUALITY_MODES = ['auto', 'high', 'eco'];
 
 function ensure() {
   if (ctx) return ctx;

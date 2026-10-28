@@ -4,7 +4,7 @@ import { genderOf } from './data.js';
 import { PRODUCTS, PRODUCT_BY_ID, STAFF, ZONES, REGISTERS, SHELF_CAPACITY, RESERVE_CAPACITY, CHANGE_MONEY, DAY_START, DAY_END, xpForLevel, dailyCharges, CASHIER_LEVELS, STOCKER_LEVELS, EVENT_BY_ID, GOALS_FROM_DAY } from './data.js';
 import { cents } from './game.js';
 import { drawProduct, money } from './render.js';
-import { settings, sfx, haptic } from './audio.js';
+import { settings, sfx, haptic, QUALITY_MODES } from './audio.js';
 import { BUILD_VERSION } from './update.js';
 import { rewardStatus, forcedAdDue, noteAd, CHEST_ODDS, PITY_AFTER, REWARD_FROM_DAY, DECOS, DECO_BY_ID, DECO_SLOTS } from './rewards.js';
 import { showRewarded, showInterstitial } from './ads.js';
@@ -18,7 +18,8 @@ function iconUrl(id, size = 56) {
   const k = `${id}:${size}`;
   if (iconCache.has(k)) return iconCache.get(k);
   const cv = document.createElement('canvas');
-  const d = 2;
+  // V1.7 : dessinée à la résolution réelle de l'écran (×2,75 sur un Xiaomi), plus en ×2 fixe.
+  const d = Math.min(3, Math.max(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 2));
   cv.width = size * d;
   cv.height = size * d;
   const c = cv.getContext('2d');
@@ -36,14 +37,66 @@ const coinSvg = '<span class="coin" aria-hidden="true"></span>';
 function popIcon(v) { return v >= 75 ? '🤩' : v >= 50 ? '😊' : v >= 25 ? '🙂' : '😟'; }
 function popLabel(v) { return v >= 75 ? 'le quartier adore' : v >= 50 ? 'bonne réputation' : v >= 25 ? 'on commence à te connaître' : 'les clients t’évitent'; }
 function popColor(v) { return v >= 50 ? '#3ccf8e' : v >= 25 ? '#ffd36b' : '#ff7a5c'; }
-const POP_CAUSES = { prix: '🏷️ Prix', service: '😊 Service', cadeau: '🎁 Erreurs de caisse en faveur du client', arnaque: '😠 Erreurs de caisse remarquées', choix: '📦 Choix en rayon', personnel: '👥 Personnel' };
+// V1.7 (retour de bêta) : causes regroupées sous 5 libellés courts, lisibles sur 360 px.
+// Causes enregistrées par le jeu (stats.rep) : prix, service, attente, vide, cadeau, arnaque, caissier, choix, personnel.
+export const POP_GROUPS = [
+  { id: 'prix', label: '🏷️ Prix', causes: ['prix'] },
+  { id: 'clients', label: '😊 Clients', causes: ['service', 'attente', 'vide'] },
+  { id: 'caisse', label: '🧾 Caisse', causes: ['cadeau', 'arnaque', 'caissier'] },
+  { id: 'rayons', label: '📦 Rayons', causes: ['choix'] },
+  { id: 'equipe', label: '👥 Équipe', causes: ['personnel'] }
+];
+const fmt1 = (v) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1).replace('.', ',')}`;
+export function popTotal(rep) {
+  return Object.values(rep || {}).reduce((a, v) => a + (Number(v) || 0), 0);
+}
 function popRows(rep) {
   if (!rep) return '';
-  const rows = Object.keys(POP_CAUSES).filter((k) => Math.abs(rep[k] || 0) >= 0.05).map((k) => {
-    const v = rep[k];
-    return `<div class="poprow"><span>${POP_CAUSES[k]}</span><b class="${v >= 0 ? 'pos' : 'neg'}">${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1).replace('.', ',')}</b></div>`;
-  });
+  const rows = POP_GROUPS.map((g) => ({ g, v: g.causes.reduce((a, k) => a + (rep[k] || 0), 0) })).filter((x) => Math.abs(x.v) >= 0.05).map(({ g, v }) =>
+    `<div class="poprow"><span>${g.label}</span><b class="${v >= 0 ? 'pos' : 'neg'}">${fmt1(v)}</b></div>`);
   return rows.length ? `<div class="poprows">${rows.join('')}</div>` : '';
+}
+// Explication courte et utile de la plus grosse cause NÉGATIVE du jour (null si rien de notable).
+export function popTip(rep, d = {}) {
+  const neg = Object.entries(rep || {}).filter(([, v]) => v <= -0.3).sort((a, b) => a[1] - b[1])[0];
+  if (!neg) return null;
+  const k = neg[0];
+  if (k === 'caissier') {
+    const top = Object.entries(d.staffErrBy || {}).sort((a, b) => b[1].n - a[1].n)[0];
+    if (top) {
+      const f = genderOf(top[0]) === 'f';
+      return `${f ? 'Ta caissière' : 'Ton caissier'} ${esc(top[0])} ${top[1].level}★ s’est trompé${f ? 'e' : ''} ${top[1].n} fois : un${f ? 'e' : ''} ${f ? 'caissière' : 'caissier'} mieux noté${f ? 'e' : ''} fait moins d’erreurs (Personnel).`;
+    }
+    return 'Ton caissier se trompe souvent : un caissier mieux noté fait moins d’erreurs (Personnel).';
+  }
+  return {
+    arnaque: 'Des clients ont vu qu’ils payaient trop : vérifie le montant tapé et la monnaie rendue.',
+    attente: 'Des clients sont partis fâchés d’attendre : va à la caisse plus vite, ou embauche un caissier.',
+    vide: 'Des clients sont repartis les mains vides : remplis les rayons avant d’ouvrir.',
+    service: 'Des clients sont repartis déçus (produits manquants ou trop chers).',
+    prix: 'Tes prix sont au-dessus du prix conseillé : baisse-les un peu dans Prix.',
+    choix: 'Rayons trop vides ou peu de produits : remplis-les et ajoute des produits.',
+    personnel: 'Une équipe débutante (1★) fait un peu baisser la popularité ; des employés mieux notés la font monter.'
+  }[k] || null;
+}
+// Avancement d'un objectif, lisible : « 27/29 », « 1 / max 2 », « +0,4 / +1,3 ».
+export function goalProgress(x) {
+  const n = (v) => String(v).replace('.', ',');
+  if (x.kind === 'pop') return `${fmt1(x.value)} / +${n(x.target)}`;
+  if (x.max) return x.target ? `${n(x.value)} (max ${n(x.target)})` : n(x.value);
+  return `${n(x.value)}/${n(x.target)}`;
+}
+// Phrase-résumé en tête du bilan (V1.7).
+export function summaryHeadline(d) {
+  const cash = d.cash ?? d.profit;
+  const stock = d.stockDelta ?? 0;
+  if (d.spent > 0 && cash < 0 && stock > 0 && stock >= -cash * 0.5) {
+    return d.profit >= 0 ? { cls: 'inv', text: '📦 Journée d’investissement : tu as rempli ton stock, et tu restes gagnant.' }
+      : { cls: 'inv', text: '📦 Journée d’investissement : ton argent est dans le stock, il se vendra les jours suivants.' };
+  }
+  if (d.profit > 0) return d.profit >= cents(20) ? { cls: 'good', text: '🎉 Belle journée !' } : { cls: 'good', text: '👍 Journée gagnante.' };
+  if (d.profit === 0) return { cls: 'flat', text: 'Journée à l’équilibre.' };
+  return { cls: 'bad', text: d.revenue < (d.charges || 0) ? '😕 Journée difficile : les ventes n’ont pas payé le loyer. Plus de produits en rayon = plus de ventes.' : '😕 Journée en perte : regarde tes prix et tes rayons.' };
 }
 
 // « Demandes non satisfaites » (nom avant la V1.4 : « introuvables », trop flou) : ce que mesure le jeu et comment l'améliorer.
@@ -202,13 +255,16 @@ export class UI {
     // Objectifs du jour et événement
     const gs = this.g.goalsStatus();
     const ev = EVENT_BY_ID[s.event];
-    const gk = `${gs.filter((x) => x.done).length}/${gs.length}|${ev ? ev.id : ''}|${s.phase}`;
+    // V1.7 : pendant la journée, le bouton montre aussi l'objectif en cours le plus avancé (ex. « 📦 27/29 »).
+    const cur = s.phase === 'open' || s.phase === 'closing' ? gs.filter((x) => !x.done && !x.failed && !x.max).sort((a, b) => (b.value / b.target) - (a.value / a.target))[0] : null;
+    const curTxt = cur ? `${cur.icon} ${goalProgress(cur)}` : '';
+    const gk = `${gs.filter((x) => x.done).length}/${gs.length}|${ev ? ev.id : ''}|${s.phase}|${curTxt}`;
     if (this.last.goals !== gk) {
       this.last.goals = gk;
       const btn = $('#btnGoals');
       btn.hidden = !gs.length && !ev;
       if (this.sheet && this.sheet.kind === 'goals') this.refreshSheet();
-      btn.innerHTML = `${gs.length ? `<span>🎯 ${gs.filter((x) => x.done).length}/${gs.length}</span>` : ''}${ev ? `<span class="ev">${ev.icon} ${esc(ev.name)}</span>` : ''}`;
+      btn.innerHTML = `${gs.length ? `<span>🎯 ${gs.filter((x) => x.done).length}/${gs.length}</span>` : ''}${curTxt ? `<span class="gcur">${curTxt}</span>` : ''}${ev ? `<span class="ev">${ev.icon}${curTxt ? '' : ` ${esc(ev.name)}`}</span>` : ''}`;
     }
     // V1.6 : bouton des coffres (à partir du jour 3, jamais dans le tutoriel). Pastille = coffres encore dispo.
     const chestOk = !s.tutoMode && s.day >= REWARD_FROM_DAY && (s.phase === 'prep' || s.phase === 'open');
@@ -601,7 +657,8 @@ export class UI {
     const gs = this.g.goalsStatus();
     const rows = gs.map((x) => {
       const pct = x.max ? (x.failed ? 0 : 100) : Math.min(100, Math.round((x.value / Math.max(0.1, x.target)) * 100));
-      const state = x.done ? '<span class="pill good">Réussi</span>' : x.failed ? '<span class="pill bad">Raté</span>' : x.max ? '<span class="pill ok">Jugé à 20:00</span>' : `<span class="pill">${String(x.value).replace('.', ',')} / ${String(x.target).replace('.', ',')}</span>`;
+      // V1.7 : progression toujours affichée (27/29), même pour les objectifs jugés à 20:00.
+      const state = x.done ? `<span class="pill good">Réussi · ${goalProgress(x)}</span>` : x.failed ? `<span class="pill bad">Raté · ${goalProgress(x)}</span>` : x.max ? `<span class="pill ok">${goalProgress(x)} · jugé à 20:00</span>` : `<span class="pill">${goalProgress(x)}</span>`;
       return `<div class="card goal ${x.done ? 'done' : ''}"><div class="ico">${x.icon}</div><div class="info"><b>${esc(x.label)}</b>${state}<div class="gauge mini"><span style="width:${pct}%"></span></div></div><span class="tag">+${coinSvg}${money(x.reward)}</span></div>`;
     }).join('');
     return `${this.head('Aujourd’hui dans le quartier', `Jour ${s.day}`)}
@@ -668,6 +725,7 @@ export class UI {
         ${this.tutoMenuHtml()}
         <div class="row"><div class="info"><b>Sons</b><span>Bips, caisse, livraisons</span></div><button class="toggle ${settings.sound ? 'on' : ''}" data-a="sound">${settings.sound ? 'Activés' : 'Coupés'}</button></div>
         <div class="row"><div class="info"><b>Vibrations</b><span>Rayon vide, scan, passage de niveau</span></div><button class="toggle ${settings.haptics ? 'on' : ''}" data-a="haptics">${settings.haptics ? 'Activées' : 'Coupées'}</button></div>
+        <div class="row"><div class="info"><b>Qualité d’image</b><span>${{ auto: 'Auto : la plus nette possible, s’allège si le téléphone rame', high: 'Haute : toujours la plus nette', eco: 'Économe : image plus simple, pour les petits téléphones' }[settings.quality] || ''}</span></div><div class="seg" role="group" aria-label="Qualité d’image">${QUALITY_MODES.map((q) => `<button class="${settings.quality === q ? 'on' : ''}" data-a="quality" data-id="${q}" aria-pressed="${settings.quality === q}">${{ auto: 'Auto', high: 'Haute', eco: 'Économe' }[q]}</button>`).join('')}</div></div>
         <div class="row"><div class="info"><b>Simuler les pubs (bêta)</b><span>Fausses pubs de 3 s pour ressentir le rythme. Aucune vraie pub.</span></div><button class="toggle ${settings.simAds ? 'on' : ''}" data-a="simAds">${settings.simAds ? 'Activé' : 'Coupé'}</button></div>
         ${tuto ? '' : '<div class="row"><div class="info"><b>Nouvelle partie</b><span>Recommencer au jour 1 (sons et vibrations gardés)</span></div><button class="danger" data-a="reset">Recommencer</button></div>'}
       </div>
@@ -707,6 +765,14 @@ export class UI {
         this.watchFor(id).then((r) => { if (r) this.showChest(r); else this.refreshSheet(); });
         return;
       case 'simAds': settings.simAds = !settings.simAds; this.hooks.saveSettings(); break;
+      case 'quality':
+        if (QUALITY_MODES.includes(id) && settings.quality !== id) {
+          settings.quality = id;
+          this.hooks.saveSettings();
+          if (this.r.setQuality) this.r.setQuality(id);
+          sfx('tick');
+        }
+        break;
       case 'zone': res = g.buyZone(id); if (res.ok) this.toast('Travaux terminés : nouvelle allée !'); break;
       case 'register': res = g.buyRegister(id); if (res.ok) this.toast('Caisse 2 installée'); break;
       case 'shelf': res = g.buyShelf(id); if (res.ok) { this.toast('Étagère installée'); this.close(); return; } break;
@@ -845,6 +911,7 @@ export class UI {
   renderModal(m) {
     const card = $('#modalCard');
     card.classList.toggle('chest-card-modal', m.kind === 'chest');
+    card.classList.toggle('has-foot', m.kind === 'summary');
     if (m.kind === 'level') {
       card.innerHTML = `<div class="burst">⭐</div><h2>Niveau ${m.data.level} !</h2>
         ${m.data.unlocked.length ? `<ul>${m.data.unlocked.map((u) => `<li>${esc(u)}</li>`).join('')}</ul>` : '<p>Ta supérette gagne en réputation.</p>'}
@@ -862,28 +929,49 @@ export class UI {
         <p class="reset-txt">Tu retrouves ta partie telle que tu l’as laissée. Le tutoriel est gardé : <b>Reprendre</b> ou <b>Recommencer</b> depuis le menu ☰.</p>
         <div class="reset-btns"><button class="ghost" data-a="cancel">Continuer</button><button class="primary" data-a="tutoLeave">Quitter</button></div>`;
     } else if (m.kind === 'summary') {
-      const d = m.data;
-      const line = (label, v, cls = '') => `<div class="sum-row ${cls}"><span>${label}</span><b>${v}</b></div>`;
-      card.innerHTML = `<small class="kicker">Fin de journée</small><h2>Jour ${d.day}</h2>
-        <div class="sum">
-          ${line('Ventes', `+${money(d.revenue)}`, 'pos')}
-          ${line('Achats de marchandise', `−${money(d.spent)}`)}
-          ${line('Loyer et charges', `−${money(d.charges)}`)}
-          ${d.goalCoins ? line('Primes d’objectifs', `+${money(d.goalCoins)}`, 'pos') : ''}
-          ${line('Résultat', `${d.profit >= 0 ? '+' : ''}${money(d.profit)}`, d.profit >= 0 ? 'big pos' : 'big neg')}
-          ${d.doubled ? line('📺 Bénéfice doublé', `+${money(d.bonus)}`, 'big pos dbl') : ''}
-        </div>
-        ${this.doubleHtml(d)}
-        <div class="chips"><span>🧺 ${d.served} clients</span><span>📦 ${d.sold} articles</span>${d.missing ? `<button class="warn chipbtn" data-a="missingHelp" aria-label="Qu’est-ce que c’est ?">❓ ${d.missing} demande${d.missing > 1 ? 's' : ''} non satisfaite${d.missing > 1 ? 's' : ''} <i>?</i></button>` : ''}${d.angry ? `<span class="warn">😠 ${d.angry} partis fâchés</span>` : ''}${d.staffErrors ? `<span class="warn">🧾 ${d.staffErrors} erreur${d.staffErrors > 1 ? 's' : ''} de caisse</span>` : ''}<span>${popIcon(d.reputation)} popularité ${Math.round(d.reputation)} %</span></div>
-        <div class="missing-help" hidden>${missingHelp(d.missingBy)}</div>
-        ${popRows(d.rep)}
-        ${d.goals && d.goals.length ? `<div class="sumgoals"><b>🎯 Objectifs : ${d.goals.filter((x) => x.done).length}/${d.goals.length}${d.goalCoins ? ` · +${money(d.goalCoins)} pièces` : ''}</b>${d.goals.map((x) => `<span class="${x.done ? 'ok' : 'ko'}">${x.done ? '✔' : '✘'} ${esc(x.label)}</span>`).join('')}</div>` : ''}
-        ${d.staffEnding.length ? `<p class="note">Fin de contrat : ${d.staffEnding.map(esc).join(', ')}. Pense à renouveler dans Personnel.</p>` : ''}
-        ${d.tempLeft ? (d.tempLeft.includes(' et ') ? `<p class="note ok">Intérimaires partis à 20 h : ${esc(d.tempLeft)}. Retrouve-les dans Personnel → Mon équipe.</p>` : `<p class="note ok">Intérimaire parti à 20 h : ${esc(d.tempLeft)}. Retrouve-le dans Personnel → Mon équipe.</p>`) : ''}
-        <button class="primary" data-a="next">Préparer le jour ${d.day + 1}</button>`;
+      card.innerHTML = this.summaryHtml(m.data);
     } else if (m.kind === 'chest') {
       card.innerHTML = this.chestRevealHtml(m.data);
     }
+  }
+
+  // V1.7 (retour de bêta du 28/10) : bilan clair et bouton « Préparer le jour N » TOUJOURS visible (pied fixe de la
+  // fenêtre, le reste défile au-dessus). Argent de la journée ≠ marchandise gardée pour demain.
+  summaryHtml(d) {
+    const line = (label, v, cls = '') => `<div class="sum-row ${cls}"><span>${label}</span><b>${v}</b></div>`;
+    const sg = (v) => `${v >= 0 ? '+' : ''}${money(v)}`;
+    const cash = d.cash ?? d.profit; // bilan d'avant la V1.7 (partie rouverte au bilan) : pas de stock connu
+    const hasStock = d.stockDelta != null;
+    const head = summaryHeadline(d);
+    const popDay = popTotal(d.rep);
+    const tip = popTip(d.rep, d);
+    const goalsDone = d.goals ? d.goals.filter((x) => x.done).length : 0;
+    return `<div class="mc-scroll">
+        <small class="kicker">Fin de journée</small><h2>Jour ${d.day}</h2>
+        <p class="sum-head ${head.cls}">${head.text}</p>
+        <div class="sum">
+          <div class="sum-title">💰 Argent de la journée</div>
+          ${line('Ventes', `+${money(d.revenue)}`, 'pos')}
+          ${d.spent ? line('Achats de marchandise', `−${money(d.spent)}`) : ''}
+          ${line('Loyer et charges', `−${money(d.charges)}`)}
+          ${d.goalCoins ? line('Primes d’objectifs', `+${money(d.goalCoins)}`, 'pos') : ''}
+          ${line(hasStock ? 'Argent gagné ou dépensé' : 'Résultat', sg(cash), `sub ${cash >= 0 ? 'pos' : 'neg'}`)}
+          ${hasStock && Math.abs(d.stockDelta) >= 1 ? line(d.stockDelta > 0 ? '📦 Stock gardé pour demain' : '📦 Stock d’avant vendu', `${d.stockDelta > 0 ? '+' : '−'}${money(Math.abs(d.stockDelta))}`, 'stock') : ''}
+          ${hasStock ? line('Résultat réel', sg(d.profit), d.profit >= 0 ? 'big pos' : 'big neg') : ''}
+          ${d.doubled ? line('📺 Bénéfice doublé', `+${money(d.bonus)}`, 'big pos dbl') : ''}
+        </div>
+        ${hasStock && d.stockDelta >= 100 ? `<p class="sum-why">La marchandise achetée et pas encore vendue n’est pas perdue : elle compte dans le résultat réel, au prix d’achat.</p>` : ''}
+        ${this.doubleHtml(d)}
+        <div class="chips"><span>🧺 ${d.served} clients</span><span>📦 ${d.sold} articles</span>${d.missing ? `<button class="warn chipbtn" data-a="missingHelp" aria-label="Qu’est-ce que c’est ?">❓ ${d.missing} demande${d.missing > 1 ? 's' : ''} ratée${d.missing > 1 ? 's' : ''} <i>?</i></button>` : ''}${d.angry ? `<span class="warn">😠 ${d.angry} parti${d.angry > 1 ? 's' : ''} fâché${d.angry > 1 ? 's' : ''}</span>` : ''}${d.staffErrors ? `<span class="warn">🧾 ${d.staffErrors} erreur${d.staffErrors > 1 ? 's' : ''} de caisse</span>` : ''}</div>
+        <div class="missing-help" hidden>${missingHelp(d.missingBy)}</div>
+        <div class="sum-pop"><b>${popIcon(d.reputation)} Popularité : ${fmt1(popDay)} aujourd’hui → <span class="nw">${Math.round(d.reputation)}&nbsp;%</span></b>
+          ${popRows(d.rep)}
+          ${tip ? `<p class="pop-tip">💡 ${tip}</p>` : ''}</div>
+        ${d.goals && d.goals.length ? `<div class="sumgoals"><b>🎯 Objectifs : ${goalsDone}/${d.goals.length}${d.goalCoins ? ` · +${money(d.goalCoins)} pièces` : ''}</b>${d.goals.map((x) => `<span class="${x.done ? 'ok' : 'ko'}"><i>${x.done ? '✔' : '✘'}</i><em>${esc(x.short || x.label)}</em><small>${goalProgress(x)}</small></span>`).join('')}</div>` : ''}
+        ${d.staffEnding.length ? `<p class="note">Fin de contrat : ${d.staffEnding.map(esc).join(', ')}. Pense à renouveler dans Personnel.</p>` : ''}
+        ${d.tempLeft ? (d.tempLeft.includes(' et ') ? `<p class="note ok">Intérimaires partis à 20 h : ${esc(d.tempLeft)}. Retrouve-les dans Personnel → Mon équipe.</p>` : `<p class="note ok">Intérimaire parti à 20 h : ${esc(d.tempLeft)}. Retrouve-le dans Personnel → Mon équipe.</p>`) : ''}
+      </div>
+      <div class="mc-foot"><button class="primary" data-a="next">Préparer le jour ${d.day + 1}</button></div>`;
   }
 
   // Bouton « Bilan doublé » (pub simulée). Masqué avant le jour 3 et dans le tutoriel ; désactivé si perte.

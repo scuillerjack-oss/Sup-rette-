@@ -473,9 +473,9 @@ test('relecture : coffre caissier ET coffre magasinier le même jour → deux in
   assert.ok(ids.includes(a.member.id) && ids.includes(b.member.id), 'les deux dans le carnet');
 });
 
-test('version : 1.6.0, versionCode au-dessus de la V1.5 ; le build embarque rewards, ads et shop', () => {
+test('version : au moins 1.6.0, versionCode au-dessus de la V1.5 ; le build embarque rewards, ads et shop', () => {
   const v = JSON.parse(read('package.json')).version;
-  assert.equal(v, '1.6.0');
+  assert.ok(versionCodeFor(v, 1) >= versionCodeFor('1.6.0', 1)); // V1.7 : « au moins » (comme le test V1.5)
   assert.ok(versionCodeFor(v, 1) > versionCodeFor('1.5.0', 999));
   assert.match(read('build.mjs'), /'data', 'rewards'[\s\S]*'ads', 'shop', 'ui'/);
 });

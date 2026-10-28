@@ -5,7 +5,7 @@ import { Renderer } from './render.js';
 import { Renderer3D, webglAvailable } from './render3d.js';
 import { UI } from './ui.js';
 import { resolveTap, isTap, TAP_RADIUS_MOVE } from './tap.js';
-import { settings, unlockAudio } from './audio.js';
+import { settings, unlockAudio, QUALITY_MODES } from './audio.js';
 import { createSaver } from './storage.js';
 import { BUILD_VERSION, UPDATE_TRIED_KEY, fetchLatestVersion, updateAction } from './update.js';
 import { sessionPlan, startTutorial, leaveTutorial, skipTutorial, savedTutoStep, backToNormal } from './tutorial.js';
@@ -23,6 +23,7 @@ function start(hotData) {
     if (typeof st.sound === 'boolean') settings.sound = st.sound;
     if (typeof st.haptics === 'boolean') settings.haptics = st.haptics;
     if (typeof st.simAds === 'boolean') settings.simAds = st.simAds;
+    if (QUALITY_MODES.includes(st.quality)) settings.quality = st.quality; // V1.7, nouvelle clé des réglages
   } catch (e) { /* réglages par défaut */ }
 
   // V1.5 : partie normale (clé SAVE_KEY) ou partie d'essai du tutoriel (sa propre clé), voir src/tutorial.js.
