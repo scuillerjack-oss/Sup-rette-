@@ -73,6 +73,13 @@ export function qualityStep(level, fps, p) {
   return level;
 }
 
+// V1.7.1 : en « Haute », faut-il prévenir le joueur que son téléphone rame ? (3 mesures d'affilée sous 20 i/s)
+export const SLOW_NOTICE = { fps: 20, need: 3 };
+export function slowNotice(fps, p) {
+  if (fps < SLOW_NOTICE.fps) p.slow++; else p.slow = 0;
+  return p.slow >= SLOW_NOTICE.need;
+}
+
 export function webglAvailable() {
   try {
     const c = document.createElement('canvas');
@@ -1262,6 +1269,7 @@ export class Renderer3D {
   adaptQuality(dt) {
     const mode = settings.quality;
     if (mode !== this.qMode) { this.qMode = mode; this.applyQuality(mode === 'eco' ? QUALITY_STEPS.length - 1 : 0); this.perf = null; }
+    if (mode === 'high') { this.watchSlow(dt); return; }
     if (mode !== 'auto') return;
     const p = this.perf || (this.perf = { warm: 0, n: 0, sum: 0, slow: 0, fast: 0 });
     if (p.warm < QUALITY.warmup) { p.warm += dt; return; }
@@ -1272,6 +1280,23 @@ export class Renderer3D {
     p.n = 0; p.sum = 0;
     const next = qualityStep(this.qLevel || 0, fps, p);
     if (next !== (this.qLevel || 0)) this.applyQuality(next);
+  }
+
+  // V1.7.1 : en « Haute » (par défaut), on ne baisse jamais la qualité tout seul. Si le téléphone rame
+  // durablement, on le dit UNE fois par lancement, et le joueur choisit lui-même dans le menu ☰.
+  watchSlow(dt) {
+    if (this.slowTold) return;
+    const p = this.perf || (this.perf = { warm: 0, n: 0, sum: 0, slow: 0, fast: 0 });
+    if (p.warm < QUALITY.warmup) { p.warm += dt; return; }
+    p.n++;
+    p.sum += dt;
+    if (p.sum < QUALITY.window) return;
+    const fps = p.n / p.sum;
+    p.n = 0; p.sum = 0;
+    if (slowNotice(fps, p)) {
+      this.slowTold = true;
+      this.game.emit('toast', { text: 'Le jeu rame ? Menu ☰ → Qualité d’image → Auto ou Économe' });
+    }
   }
 
   // Réglage du menu ☰ : appliqué tout de suite (textures redessinées à la bonne taille au prochain rechargement).

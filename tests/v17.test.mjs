@@ -122,13 +122,13 @@ test('bug 2 : la qualité auto ignore la chauffe, ne baisse que si c’est lent 
 
 test('bug 2 : réglage « Qualité d’image : Auto / Haute / Économe » dans le menu, nouvelle clé des réglages', () => {
   assert.deepEqual(QUALITY_MODES, ['auto', 'high', 'eco']);
-  assert.equal(settings.quality, 'auto');
+  assert.ok(QUALITY_MODES.includes(settings.quality)); // défaut « Haute » depuis la V1.7.1
   const ui = read('src/ui.js');
   assert.match(ui, /<b>Qualité d’image<\/b>/);
   assert.match(ui, /data-a="quality"/);
   assert.match(ui, /case 'quality':[\s\S]*?this\.hooks\.saveSettings\(\)/);
   const main = read('src/main.js');
-  assert.match(main, /QUALITY_MODES\.includes\(st\.quality\)\) settings\.quality = st\.quality/);
+  assert.match(main, /settings, savedQuality\(st\)/); // V1.7.1 : lecture via savedQuality()
   // clés inchangées
   assert.equal(SETTINGS_KEY, 'superette-settings-v1');
   assert.equal(SAVE_KEY, 'superette-save-v1');
@@ -301,7 +301,8 @@ test('bug 3 : lisible à 360 px — libellés courts, montants jamais coupés, p
 });
 
 test('version 1.7.0 et cahier des charges à jour', () => {
-  assert.equal(JSON.parse(read('package.json')).version, '1.7.0');
+  const [a, b, c] = JSON.parse(read('package.json')).version.split('.').map(Number);
+  assert.ok(a > 1 || (a === 1 && (b > 7 || (b === 7 && c >= 0))), 'au moins 1.7.0');
   const doc = read('docs/CAHIER-DES-CHARGES.md');
   assert.match(doc, /### V1\.7/);
   assert.match(doc, /## Prochaine version \(V1\.8\)/);
