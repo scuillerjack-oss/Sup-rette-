@@ -2,9 +2,16 @@
 let ctx = null;
 let master = null;
 // simAds (V1.6) : « Simuler les pubs (bêta) », activé par défaut (fausses pubs de src/ads.js, aucune vraie pub).
-// quality (V1.7) : « Qualité d'image » du menu ☰ : 'auto' (par défaut), 'high' (Haute) ou 'eco' (Économe).
-export const settings = { sound: true, haptics: true, simAds: true, quality: 'auto' };
+// quality (V1.7) : « Qualité d'image » du menu ☰ : 'auto', 'high' (Haute) ou 'eco' (Économe).
+// V1.7.1 (demande de Jack) : « Haute » par défaut dès le premier lancement ; qualityChosen = le joueur a choisi lui-même.
+export const settings = { sound: true, haptics: true, simAds: true, quality: 'high', qualityChosen: false };
 export const QUALITY_MODES = ['auto', 'high', 'eco'];
+// V1.7.1 : qualité à reprendre depuis les réglages enregistrés. Seul un choix fait par le joueur est gardé ;
+// sinon (premier lancement, ou réglages V1.7 qui contenaient 'auto' par défaut) → « Haute ».
+export function savedQuality(st) {
+  if (st && st.qualityChosen === true && QUALITY_MODES.includes(st.quality)) return { quality: st.quality, qualityChosen: true };
+  return { quality: 'high', qualityChosen: false };
+}
 
 function ensure() {
   if (ctx) return ctx;

@@ -725,7 +725,7 @@ export class UI {
         ${this.tutoMenuHtml()}
         <div class="row"><div class="info"><b>Sons</b><span>Bips, caisse, livraisons</span></div><button class="toggle ${settings.sound ? 'on' : ''}" data-a="sound">${settings.sound ? 'Activés' : 'Coupés'}</button></div>
         <div class="row"><div class="info"><b>Vibrations</b><span>Rayon vide, scan, passage de niveau</span></div><button class="toggle ${settings.haptics ? 'on' : ''}" data-a="haptics">${settings.haptics ? 'Activées' : 'Coupées'}</button></div>
-        <div class="row"><div class="info"><b>Qualité d’image</b><span>${{ auto: 'Auto : la plus nette possible, s’allège si le téléphone rame', high: 'Haute : toujours la plus nette', eco: 'Économe : image plus simple, pour les petits téléphones' }[settings.quality] || ''}</span></div><div class="seg" role="group" aria-label="Qualité d’image">${QUALITY_MODES.map((q) => `<button class="${settings.quality === q ? 'on' : ''}" data-a="quality" data-id="${q}" aria-pressed="${settings.quality === q}">${{ auto: 'Auto', high: 'Haute', eco: 'Économe' }[q]}</button>`).join('')}</div></div>
+        <div class="row"><div class="info"><b>Qualité d’image</b><span>${{ auto: 'Auto : nette, s’allège toute seule si le téléphone rame', high: 'Haute (conseillé) : toujours la plus nette', eco: 'Économe : image plus simple, pour les petits téléphones' }[settings.quality] || ''}</span></div><div class="seg" role="group" aria-label="Qualité d’image">${QUALITY_MODES.map((q) => `<button class="${settings.quality === q ? 'on' : ''}" data-a="quality" data-id="${q}" aria-pressed="${settings.quality === q}">${{ auto: 'Auto', high: 'Haute', eco: 'Économe' }[q]}</button>`).join('')}</div></div>
         <div class="row"><div class="info"><b>Simuler les pubs (bêta)</b><span>Fausses pubs de 3 s pour ressentir le rythme. Aucune vraie pub.</span></div><button class="toggle ${settings.simAds ? 'on' : ''}" data-a="simAds">${settings.simAds ? 'Activé' : 'Coupé'}</button></div>
         ${tuto ? '' : '<div class="row"><div class="info"><b>Nouvelle partie</b><span>Recommencer au jour 1 (sons et vibrations gardés)</span></div><button class="danger" data-a="reset">Recommencer</button></div>'}
       </div>
@@ -768,6 +768,7 @@ export class UI {
       case 'quality':
         if (QUALITY_MODES.includes(id) && settings.quality !== id) {
           settings.quality = id;
+          settings.qualityChosen = true;
           this.hooks.saveSettings();
           if (this.r.setQuality) this.r.setQuality(id);
           sfx('tick');

@@ -522,6 +522,16 @@ gardée après rechargement) ; objectifs pendant la journée (bouton 🎯 avec p
 - Le texte « Qualité d'image » s'applique tout de suite à la résolution et aux ombres ; les textures déjà
   dessinées (enseigne, sol) gardent leur taille jusqu'au prochain lancement.
 
+### V1.7.1 — qualité d'image « Haute » dès le début (28/10/2026)
+Demande de Jack après la V1.7 : « mettre la résolution Haute, la plus élevée, dès le début ».
+- **« Haute » par défaut** : image à la résolution réelle de l'écran (×3 au plus), ombres douces, dès le premier lancement.
+  Les joueurs qui avaient des réglages V1.7 (« Auto » mis par défaut, jamais choisi) passent aussi en « Haute ».
+  Un choix fait à la main dans le menu ☰ est gardé (nouveau champ `qualityChosen` dans les réglages, aucune clé renommée).
+- **Pas de baisse automatique en « Haute »** : si le téléphone rame durablement (3 mesures de 3 s d'affilée sous 20 i/s,
+  après 4 s de chauffe, en temps réel mesuré — pas pendant le tutoriel), un message conseille UNE fois par lancement « Menu ☰ → Qualité d'image → Auto ou Économe ».
+  Le jeu ne change jamais le réglage tout seul.
+- Menu : « Haute (conseillé) ». Tests : `tests/v171.test.mjs`.
+
 ## Prochaine version (V1.8)
 1. **Concurrents dans le quartier** (reportés de la V1.7) : 1 puis 2 magasins rivaux qui apparaissent avec la
    progression ; ils prennent des clients quand ta popularité est plus basse que la leur (facteur dans

@@ -1,7 +1,7 @@
 {
   "name": "superette",
   "private": true,
-  "version": "1.7.0",
+  "version": "1.7.1",
   "type": "module",
   "description": "Ma P'tite Supérette — jeu mobile (PWA + APK Android de bêta)",
   "scripts": {
