@@ -528,7 +528,7 @@ Demande de Jack après la V1.7 : « mettre la résolution Haute, la plus élevé
   Les joueurs qui avaient des réglages V1.7 (« Auto » mis par défaut, jamais choisi) passent aussi en « Haute ».
   Un choix fait à la main dans le menu ☰ est gardé (nouveau champ `qualityChosen` dans les réglages, aucune clé renommée).
 - **Pas de baisse automatique en « Haute »** : si le téléphone rame durablement (3 mesures de 3 s d'affilée sous 20 i/s,
-  après 4 s de chauffe), un message conseille UNE fois par lancement « Menu ☰ → Qualité d'image → Auto ou Économe ».
+  après 4 s de chauffe, en temps réel mesuré — pas pendant le tutoriel), un message conseille UNE fois par lancement « Menu ☰ → Qualité d'image → Auto ou Économe ».
   Le jeu ne change jamais le réglage tout seul.
 - Menu : « Haute (conseillé) ». Tests : `tests/v171.test.mjs`.
 

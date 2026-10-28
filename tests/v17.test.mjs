@@ -300,7 +300,7 @@ test('bug 3 : lisible à 360 px — libellés courts, montants jamais coupés, p
   assert.ok(GOAL_KINDS.perfect.short(3).length <= 24);
 });
 
-test('version 1.7.0 et cahier des charges à jour', () => {
+test('version au moins 1.7.0 et cahier des charges à jour', () => {
   const [a, b, c] = JSON.parse(read('package.json')).version.split('.').map(Number);
   assert.ok(a > 1 || (a === 1 && (b > 7 || (b === 7 && c >= 0))), 'au moins 1.7.0');
   const doc = read('docs/CAHIER-DES-CHARGES.md');

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { settings, savedQuality } from '../src/audio.js';
-import { renderPixelRatio, slowNotice, SLOW_NOTICE } from '../src/render3d.js';
+import { renderPixelRatio, slowNotice, SLOW_NOTICE, Renderer3D } from '../src/render3d.js';
 
 const read = (f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
 
@@ -40,7 +40,37 @@ test('V1.7.1 : téléphone qui rame durablement → un seul conseil, sans rien c
   assert.equal(slowNotice(10, p), true);
   const src = read('src/render3d.js');
   assert.match(src, /this\.slowTold = true;/);
-  assert.match(src, /if \(this\.slowTold\) return;/);
+  assert.match(src, /if \(this\.slowTold \|\| /);
+});
+
+// Bug trouvé en relecture : la boucle de jeu plafonne dt à 0,05 s, donc avec ce dt on ne voyait jamais < 20 i/s.
+function fakeRenderer(tuto = false) {
+  const toasts = [];
+  const r = Object.create(Renderer3D.prototype);
+  r.game = { state: { tutoMode: tuto }, emit: (type, d) => { if (type === 'toast') toasts.push(d.text); } };
+  return { r, toasts };
+}
+function play(r, fps, seconds, clock) {
+  for (let i = 0; i < fps * seconds; i++) { clock.t += 1000 / fps; r.watchSlow(0.05, clock.t); }
+}
+
+test('V1.7.1 : un téléphone à 10 i/s reçoit bien le conseil (vrai temps, pas le dt plafonné), une seule fois', () => {
+  const { r, toasts } = fakeRenderer();
+  const clock = { t: 1000 };
+  play(r, 10, 30, clock);
+  assert.equal(toasts.length, 1);
+  assert.match(toasts[0], /Qualité d’image/);
+  play(r, 10, 30, clock);
+  assert.equal(toasts.length, 1, 'une seule fois par lancement');
+});
+
+test('V1.7.1 : téléphone fluide ou tutoriel → aucun conseil', () => {
+  const a = fakeRenderer();
+  play(a.r, 60, 30, { t: 1000 });
+  assert.equal(a.toasts.length, 0);
+  const b = fakeRenderer(true);
+  play(b.r, 10, 30, { t: 1000 });
+  assert.equal(b.toasts.length, 0);
 });
 
 test('V1.7.1 : version et cahier des charges', () => {

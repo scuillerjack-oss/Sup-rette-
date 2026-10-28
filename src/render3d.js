@@ -1284,12 +1284,15 @@ export class Renderer3D {
 
   // V1.7.1 : en « Haute » (par défaut), on ne baisse jamais la qualité tout seul. Si le téléphone rame
   // durablement, on le dit UNE fois par lancement, et le joueur choisit lui-même dans le menu ☰.
-  watchSlow(dt) {
-    if (this.slowTold) return;
+  // La boucle de jeu plafonne dt à 0,05 s (donc ≥ 20 i/s apparents) : on mesure ici le VRAI temps écoulé.
+  watchSlow(dt, now = performance.now()) {
+    if (this.slowTold || (this.game.state && this.game.state.tutoMode)) return;
     const p = this.perf || (this.perf = { warm: 0, n: 0, sum: 0, slow: 0, fast: 0 });
-    if (p.warm < QUALITY.warmup) { p.warm += dt; return; }
+    const real = p.t != null ? Math.min(2, (now - p.t) / 1000) : 0; // > 2 s : appli en pause, on ne compte pas
+    p.t = now;
+    if (p.warm < QUALITY.warmup) { p.warm += real; return; }
     p.n++;
-    p.sum += dt;
+    p.sum += real;
     if (p.sum < QUALITY.window) return;
     const fps = p.n / p.sum;
     p.n = 0; p.sum = 0;
