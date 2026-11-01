@@ -1,5 +1,6 @@
 # Modèle économique et fiche de rentabilité — Ma P'tite Supérette
 
+> Mise à jour du 01/11/2026 : commission Google corrigée (15 %) et étude du classement en ligne (section 9).
 > Étude du 26/10/2026, demandée par Jack, mise à jour après brainstorming le même jour (version 2).
 > Rien n'est codé ni activé : AdMob réel et produits Google Play seront branchés plus tard, une fois la
 > micro-entreprise créée et avec l'accord écrit de Jack (règle de `CLAUDE.md`).
@@ -22,7 +23,7 @@
 | Valeurs prudentes utilisées | 6 € (récompensée), 4 € (interstitielle) | public francophone mélangé + taux de remplissage ~90 % |
 | Rétention d'un jeu de simulation | J1 30 % · J7 8,7 % · J30 3 % | référence du marché |
 | Joueurs qui achètent quelque chose | ~1 % | repère hybrid-casual |
-| Commission Google Play (EEE) | 20 % + 5 % de frais de paiement = **25 %** | nouvelles installations, règles 2026 |
+| Commission Google Play | 10 % de commission de service + 5 % de frais de facturation = **15 %** | corrigé le 01/11/2026 : depuis le 30/06/2026, petit développeur (< 1 M$ de revenus/an), nouvelles installations. Les **25 %** ne concernent que la part au-delà de 1 M$/an. Source : blog ecorpit.com (à reconfirmer dans la Play Console). Ne touche que les achats : les pubs AdMob ne paient pas Google Play. |
 | Cotisations micro-entreprise | **21,2 %** du chiffre d'affaires | revenus pub = BIC prestations « le plus souvent » ; à confirmer à l'inscription |
 | Coût de fonctionnement du jeu | **0 €** | pas de serveur, pas d'API, pas d'IA payante |
 
@@ -72,11 +73,12 @@ c'était une exception à la règle « achats de confort seulement ».
 Pour un joueur actif **un jour donné** (environ 25 min de jeu, soit 5 journées) :
 - 1,5 pub imposée × 4 € / 1 000 = 0,006 €
 - 2,5 pubs récompensées × 6 € / 1 000 = 0,015 € (estimation prudente : jusqu'à 4 récompenses possibles par journée)
-- Achats : 1 % des joueurs × 2,50 € en moyenne, net de la commission Google, étalés sur leur durée de vie ≈ 0,005 €
-- **Total ≈ 0,026 € par joueur actif et par jour** (repère du marché : 0,01 à 0,05 $ pour un jeu casual à pubs)
+- Achats : 1 % des joueurs × 2,50 € de panier moyen brut, moins 15 % de commission Google (2,125 € net), étalés sur ~4,4 jours ≈ 0,005 € (avec l'ancienne commission de 25 % : 0,004 €)
+- **Total ≈ 0,026 € par joueur actif et par jour** (0,025 € avec l'ancienne commission : la correction ne pèse que sur la part « achats », soit ~+2 % sur le total) (repère du marché : 0,01 à 0,05 $ pour un jeu casual à pubs)
 
 Un joueur qui installe le jeu joue en moyenne ~4,4 jours au total (avec la rétention ci-dessus).
-**Valeur d'une installation ≈ 0,11 €** avant cotisations, ≈ **0,09 € net**.
+**Valeur d'une installation ≈ 0,11 €** avant cotisations (0,114 € avec la commission de 15 %, 0,111 € avec 25 %), ≈ **0,09 € net**.
+Les tableaux de la section 4 ne bougent donc pas à l'arrondi.
 
 ## 4. Fiche de rentabilité — 3 scénarios
 
@@ -129,5 +131,79 @@ Coffres, intérimaire, bilan doublé, décorations et pub imposée sont codés e
 - ARPDAU casual / hybrid-casual : blog.playio.co — ARPDAU benchmarks
 - Rétention par genre : segwise.ai (d'après Mistplay)
 - Commissions Google Play : support.google.com/googleplay/android-developer/answer/112622
+- Commission 15 % depuis le 30/06/2026 (10 % + 5 %) : ecorpit.com/google-play-service-fee-split-2026-app-economics/ (blog, **à reconfirmer dans la Play Console**)
 - Cotisations micro-entreprise 2026 : lecoindesentrepreneurs.fr
 - Fiscalité d'une app mobile : hayot-expertise.fr
+
+## 9. Étude du 01/11/2026 : classement en ligne
+
+> Demande de Jack (31/10/2026) : un classement en ligne, **seulement s'il ne casse pas le modèle**. Étude seulement :
+> rien n'est codé. Chiffres calculés par `scripts/economie.mjs` (`node scripts/economie.mjs`). Les coûts de
+> Firebase et les détails de Google Play Jeux sont de mémoire : **à reconfirmer sur les pages officielles** avant toute décision.
+
+### 9.1 La règle qui pèse sur tout
+`CLAUDE.md` : solo hors ligne = petits avantages payants permis ; **en ligne (joueurs contre joueurs) = aucun avantage payant**.
+Un classement compare des joueurs : tout ce qui améliore le score contre de l'argent y devient interdit.
+
+| Élément du jeu | Dans la partie classée |
+|---|---|
+| Pack Gérant : « 3 coffres offerts par jour » (employés 5★ possibles) | **INTERDIT** (avantage payant) |
+| Pack Gérant : plus de pub imposée | permis (confort, pas de score) |
+| Vitesse ×3 (0,89 € ou Pack) | permis **si** le score se mesure en journées de jeu et si une seule tentative compte par semaine ; sinon interdit |
+| Coffres caissier / magasinier par pub (5★ possible) | gratuits, mais **désactivés** : même départ pour tous |
+| Bilan doublé par pub | **désactivé** (le plus gros gain, +89 pièces/journée au robot) |
+| Coffre déco (aucun effet sur le jeu) | permis (sert de pub récompensée restante) |
+
+### 9.2 Les options comparées
+**A. Google Play Jeux (classement officiel).** Gratuit, Google héberge, gère le compte et les classements
+hebdomadaire / de toujours. Coût 0 €. Travail **élevé** : plugin natif Capacitor, CI Android à adapter, configuration Play Console ;
+APK de bêta et AAB seulement (pas la version web). Triche : le score vient du téléphone, Google ne le vérifie pas
+(un téléphone trafiqué envoie n'importe quoi). RGPD : connexion Google obligatoire pour y figurer, c'est Google le responsable, mais déclarer dans la fiche
+de sécurité des données et la politique de confidentialité. Risque : dépendance à un plugin.
+
+**B. Défi de la semaine, même graine pour tous, sans serveur.** Chaque lundi, une partie courte (ex. 10 journées) avec
+les mêmes clients, prix et événements pour tout le monde (le moteur sait déjà tirer au sort avec graine, `seededRng`).
+Le score s'affiche et se partage par message (texte + code de contrôle) avec ses amis ; classement entre amis, à la main.
+Coût 0 €. Travail **faible à moyen** : mode « partie classée » séparé, écran de résultat, bouton Partager.
+Triche : possible mais sans enjeu (entre amis). RGPD : aucun compte, aucune donnée envoyée. Limite : ce n'est pas un vrai classement mondial.
+
+**C. A + B ensemble (recommandé pour plus tard).** Le défi de la semaine (B) envoie son score au classement Google Play Jeux
+(A). Même partie séparée pour tous, classement public à coût nul. À faire en deux temps : B d'abord, A ensuite si B plaît.
+
+**D. Serveur Firebase.** Classement maison, avec pseudos, vérification des scores côté serveur. Coût : le forfait gratuit
+suffit pour de petits volumes, mais la vérification demande le forfait à la carte (carte bancaire obligatoire) et
+peut dépasser le gratuit vers 1 000 joueurs/jour : de l'ordre de quelques euros par mois, **mais imprévisible** (un pic ou une
+attaque = facture). Travail **très élevé** (comptes, modération des pseudos, suppression de données sur demande, politique RGPD, serveur à surveiller).
+Contraire à la règle « 0 € de coût de fonctionnement » et à « aucun serveur » de `CLAUDE.md`. **À écarter.**
+
+### 9.3 Revenu mensuel, 10 000 joueurs actifs/mois
+
+Hypothèses (écrites dans `scripts/economie.mjs`) : jours joués par mois 3 / 5 / 8 (bas / central / haut) ; pubs et achats
+comme en section 3 ; commission 15 %.
+Hypothèses classement (prudentes, option C ou B) : 10 / 25 / 40 % des joueurs y participent ; ils jouent 0 / +20 / +40 % de jours en plus ;
+la moitié de leurs jours se passe en partie classée, où il ne reste que 1 pub récompensée sur 4 (le coffre déco) ; achats −10 % (le Pack Gérant « 3 coffres » vaut moins).
+Les pubs imposées (bilan) restent. Coût de fonctionnement : 0 € dans tous les cas.
+
+| Scénario | Ancienne commission (25 %) | **Sans classement** (15 %) | **Avec classement** | Écart | Net après cotisations (sans / avec) |
+|---|---|---|---|---|---|
+| Bas | 270 € | **280 €** | 267 € | −4,6 % | 221 € / 210 € |
+| Central | 1 238 € | **1 263 €** | 1 209 € | −4,2 % | 995 € / 953 € |
+| Haut | 4 050 € | **4 110 €** | 4 030 € | −1,9 % | 3 239 € / 3 176 € |
+
+- **Correction de commission** : +10 / +25 / +60 € par mois (bas / central / haut), soit +2 % seulement : les achats pèsent peu face aux pubs.
+- **Ce que coûte la neutralisation** : environ 50 € par mois au scénario central (−4 %). C'est la perte de pubs récompensées dans les parties classées, plus un peu d'achats.
+- **Point d'équilibre** (scénario central, 25 % de participants) : le classement ne se rembourse que si ses joueurs jouent **environ +47 % de jours** en plus.
+  À +20 % (hypothèse prudente) il perd 4 % ; à +60 % il gagne 2 % ; à +100 % il gagne 8 %. Un classement ne rapporte donc pas
+  d'argent en lui-même, il vaut surtout par la rétention (levier n°3 de la section 5) et la visibilité (le bouche-à-oreille compte plus que 4 %).
+- Le **solo** n'est pas touché : sans partie classée, coffres, bilan doublé et Pack Gérant restent identiques.
+
+### 9.4 Recommandation franche
+- **Classement mondial avec serveur (D) : ne pas faire.** Contraire aux règles du studio.
+- **Classement en ligne officiel (A) maintenant : non.** Trop de travail pour un jeu qui n'a pas encore de joueurs, et sans effet prouvé sur la rétention.
+- **Défi de la semaine sans serveur (B) : oui, mais plus tard**, après la V1.8 (concurrents) et après le test fermé de 14 jours
+  (mesure de la vraie rétention). Version suggérée : V1.9 ou V2.0. **Décision d'étape** : si, en test fermé, la rétention à 7 jours est ≥ 8 %,
+  construire B ; ensuite, ne brancher A (Google Play Jeux) que si au moins 20 % des joueurs lancent le défi.
+- **Règles de la partie classée à fixer maintenant** : partie séparée (nouvelle clé de sauvegarde, sans toucher à
+  la partie solo), départ identique, sans coffres d'employés ni bilan doublé, Vitesse ×3 permise mais une seule tentative comptée par semaine,
+  Pack Gérant limité au confort (pas de pub imposée).
+- **Ordre de priorité des chiffres** : la vraie mesure de la rétention en bêta compte plus que ce classement ; à ce jour tout reste une estimation.
